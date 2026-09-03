@@ -8,6 +8,25 @@ A blind, side-by-side taste test of Claude and GPT models on Microsoft Foundry. 
 
 ![Architecture showing the Blazor taste-test app, passwordless authentication, and two Foundry model deployments](docs/img/architecture.png)
 
+## Quickstart with `azd`
+
+Start from the published template and go directly into provisioning:
+
+```powershell
+azd auth login
+azd init --template openai-anthropic-taste-test --up
+```
+
+`azd init` creates an `openai-anthropic-taste-test` folder, then `--up` provisions and deploys it. The interactive flow asks for the Azure subscription, region, environment name, and Anthropic organization metadata. On an eligible subscription, the Bicep `modelProviderData` block accepts the Anthropic Marketplace offer automatically; no portal deployment step or API key is required.
+
+Already cloned the repository? The complete path is one command:
+
+```powershell
+azd up
+```
+
+When deployment finishes, follow the printed `SERVICE_WEB_URI`.
+
 ## What this template demonstrates
 
 - One .NET 10 Blazor Server page with two neutral lanes, **A** and **B**.
@@ -33,21 +52,61 @@ A blind, side-by-side taste test of Claude and GPT models on Microsoft Foundry. 
 | Azure Container Registry | Stores the application image built by `azd deploy` |
 | Log Analytics workspace | Collects Container Apps platform and application console logs |
 
-The runtime uses two provider-specific SDK constructions:
+## Under the covers: two SDKs, one MEAI loop
+
+The providers use their native wire protocols but meet at the `Microsoft.Extensions.AI` (`MEAI`) abstraction:
+
+| Lane implementation | Native client | Foundry route | MEAI adapter |
+|---|---|---|---|
+| OpenAI SDK for .NET | `ResponsesClient` | `/openai/v1` Responses API | `Microsoft.Extensions.AI.OpenAI` |
+| Anthropic C# SDK | `AnthropicFoundryClient` | `/anthropic` Messages API | Shipped in the `Anthropic` package |
+
+Both credentials refresh Entra tokens automatically. The OpenAI SDK uses `BearerTokenPolicy`; the Anthropic Foundry credential takes the same `TokenCredential` directly:
 
 ```csharp
+var credential = new DefaultAzureCredential();
+
 IChatClient gpt = new OpenAIClient(
         new BearerTokenPolicy(credential, "https://ai.azure.com/.default"),
         new OpenAIClientOptions { Endpoint = new($"{endpoint}/openai/v1/") })
     .GetResponsesClient()
-    .AsIChatClient(aoaiDeployment);
+    .AsIChatClient(aoaiDeployment)
+    .AsBuilder()
+    .UseFunctionInvocation()
+    .Build();
 
 IChatClient claude = new AnthropicFoundryClient(
         new AnthropicFoundryIdentityTokenCredentials(credential, resourceName))
-    .AsIChatClient(claudeDeployment);
+    .AsIChatClient(claudeDeployment)
+    .AsBuilder()
+    .UseFunctionInvocation()
+    .Build();
 ```
 
-Both are wrapped with `UseFunctionInvocation()` and consumed through the same streaming `IChatClient` path.
+After construction, the comparison loop is provider-neutral MEAI code. It sends both histories concurrently, streams normalized `ChatResponseUpdate` values, and folds each stream back into a `ChatResponse` so usage and conversation metadata are retained:
+
+```csharp
+await Task.WhenAll(lanes.Select(async lane =>
+{
+    lane.History.Add(new ChatMessage(ChatRole.User, prompt));
+    var updates = new List<ChatResponseUpdate>();
+
+    await foreach (var update in lane.Client.GetStreamingResponseAsync(
+        lane.History,
+        new ChatOptions { MaxOutputTokens = 900 },
+        cancellationToken))
+    {
+        updates.Add(update);
+        lane.Buffer.Append(update.Text);
+        await requestThrottledRender();
+    }
+
+    ChatResponse response = updates.ToChatResponse();
+    lane.History.AddMessages(response);
+    lane.Usage = response.Usage;
+    lane.ConversationId = response.ConversationId;
+}));
+```
 
 ## Prerequisites
 
