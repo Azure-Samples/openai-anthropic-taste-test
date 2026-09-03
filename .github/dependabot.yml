@@ -4,6 +4,11 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # MEAI.OpenAI 10.9 requires OpenAI >= 2.12.0 and < 2.13.0.
+      - dependency-name: OpenAI
+        versions:
+          - ">= 2.13.0"
     groups:
       dotnet:
         patterns:
