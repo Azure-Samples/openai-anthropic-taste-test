@@ -8,6 +8,12 @@ A blind, side-by-side taste test of Claude and GPT models on Microsoft Foundry. 
 
 ![Architecture showing the Blazor taste-test app, passwordless authentication, and two Foundry model deployments](docs/img/architecture.png)
 
+## See the experience
+
+The page starts with one prompt box and two identity-free lanes labeled **A** and **B**. Both answers stream concurrently using the same typography and layout. After both finish, the audience picks a winner; only then does the page reveal the providers, model IDs, SDKs, and wire protocols. The winning lane remains for follow-up turns.
+
+![Two blind response lanes showing the same prompt and different answers](docs/img/taste-test.png)
+
 ## Quickstart with `azd`
 
 Start from the published template and go directly into provisioning:
@@ -26,6 +32,34 @@ azd up
 ```
 
 When deployment finishes, follow the printed `SERVICE_WEB_URI`.
+
+### Unattended setup
+
+Once browser authentication is cached, every deployment choice can be supplied up front:
+
+```powershell
+azd env new taste-test `
+  --subscription <subscription-id> `
+  --location eastus2 `
+  --no-prompt
+
+azd env set AZURE_TENANT_ID <tenant-id>
+azd env set CLAUDE_ORGANIZATION_NAME "<legal-entity>"
+azd env set CLAUDE_COUNTRY_CODE US
+azd env set CLAUDE_INDUSTRY technology
+azd provision --preview --no-prompt
+azd up --no-prompt
+```
+
+The organization name is legal attestation data and is the only value the template will not guess.
+
+### Agent-assisted setup
+
+This repository includes the [`openai-anthropic-taste-test` Agent Skill](.github/skills/openai-anthropic-taste-test/SKILL.md) for GitHub Copilot CLI and compatible agents. From this workspace, ask:
+
+> Set up and verify the OpenAI + Anthropic taste test with the least manual intervention.
+
+The skill reuses cached authentication, resolves the azd environment, selects full Azure hosting when RBAC permits it or the no-role-assignment local mode when it does not, previews infrastructure, deploys, smoke-tests both models, verifies the blind DOM, and reports cleanup steps.
 
 ## What this template demonstrates
 
@@ -110,7 +144,7 @@ await Task.WhenAll(lanes.Select(async lane =>
 
 ## Prerequisites
 
-- An Azure subscription with a valid payment method.
+- An Azure subscription eligible for the selected Anthropic Marketplace plan. Public production plans generally require a valid payment method; purpose-built test subscriptions can use an already accepted internal `*-test-plan`.
 - Permission to create resources and role assignments in the subscription (`Owner` or `User Access Administrator` plus `Contributor`).
 - Azure Marketplace purchase eligibility for Anthropic models.
 - Quota for the requested GPT and Claude model deployments.
