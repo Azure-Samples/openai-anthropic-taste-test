@@ -28,7 +28,7 @@
         </div>
     }
 
-    @if (!Session.Revealed && !Session.Lanes.Any(lane => lane.Turns.Count > 0))
+    @if (!Session.Revealed && !Session.HasTranscript)
     {
         <section class="seed-section" aria-labelledby="seed-heading">
             <div class="section-heading">
@@ -77,7 +77,7 @@
                             <div class="turn-label">You</div>
                             <p class="turn-prompt">@turn.Prompt</p>
                             <div class="turn-label">Answer</div>
-                            @if (lane.IsStreaming && string.IsNullOrEmpty(turn.Response))
+                            @if (lane.IsStreaming && !turn.HasResponse)
                             {
                                 <div class="thinking">
                                     <span></span><span></span><span></span>
@@ -149,9 +149,9 @@
                     <p class="eyebrow">SAME ABSTRACTION, DIFFERENT WIRE</p>
                     <h3>Both lanes end as <code>IChatClient</code></h3>
                 </div>
-                <pre><code>GetResponsesClient().AsIChatClient("@Session.GetIdentity(Session.Lanes.Single(lane => Session.GetIdentity(lane).Provider == "OpenAI")).ModelId")
+                <pre><code>GetResponsesClient().AsIChatClient("@Session.GetIdentity(ProviderKind.OpenAI).ModelId")
 
-AnthropicFoundryClient(...).AsIChatClient("@Session.GetIdentity(Session.Lanes.Single(lane => Session.GetIdentity(lane).Provider == "Anthropic")).ModelId")</code></pre>
+AnthropicFoundryClient(...).AsIChatClient("@Session.GetIdentity(ProviderKind.Anthropic).ModelId")</code></pre>
             </div>
         </section>
     }
@@ -178,9 +178,9 @@ AnthropicFoundryClient(...).AsIChatClient("@Session.GetIdentity(Session.Lanes.Si
                 {
                     <button type="button" class="button-secondary" @onclick="Cancel">Cancel</button>
                 }
-                @if (Session.Revealed)
+                @if (Session.Revealed || Session.HasTranscript)
                 {
-                    <button type="button" class="button-secondary" @onclick="NewTasteTest">New taste test</button>
+                    <button type="button" class="button-secondary" disabled="@Session.IsBusy" @onclick="NewTasteTest">New taste test</button>
                 }
                 <button type="submit" class="button-primary" disabled="@(Session.IsBusy || string.IsNullOrWhiteSpace(Prompt))">
                     @(Session.Revealed ? "Ask winner" : "Start taste test")
@@ -201,6 +201,8 @@ AnthropicFoundryClient(...).AsIChatClient("@Session.GetIdentity(Session.Lanes.Si
 </main>
 
 @code {
+    private static readonly TimeSpan RenderInterval = TimeSpan.FromMilliseconds(100);
+
     private CancellationTokenSource? _requestCancellation;
     private long _lastRenderTimestamp;
 
@@ -216,28 +218,25 @@ AnthropicFoundryClient(...).AsIChatClient("@Session.GetIdentity(Session.Lanes.Si
 
     private async Task SubmitAsync()
     {
+        var submittedPrompt = Prompt;
         ErrorMessage = null;
-        _requestCancellation?.Dispose();
-        _requestCancellation = new CancellationTokenSource();
+
+        var cancellation = new CancellationTokenSource();
+        var previousCancellation = Interlocked.Exchange(ref _requestCancellation, cancellation);
+        previousCancellation?.Dispose();
 
         try
         {
-            var submittedPrompt = Prompt;
             Prompt = string.Empty;
-            await Session.SendAsync(
-                submittedPrompt,
-                RequestRenderAsync,
-                _requestCancellation.Token);
+            await Session.SendAsync(submittedPrompt, RequestRenderAsync, cancellation.Token);
         }
-        catch (ArgumentException exception)
+        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
         {
+            // Validation and lifecycle problems are user-correctable, so restore what was typed.
+            Prompt = submittedPrompt;
             ErrorMessage = exception.Message;
         }
-        catch (InvalidOperationException exception)
-        {
-            ErrorMessage = exception.Message;
-        }
-        catch (OperationCanceledException) when (_requestCancellation.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
             ErrorMessage = "The response was canceled.";
         }
@@ -247,22 +246,32 @@ AnthropicFoundryClient(...).AsIChatClient("@Session.GetIdentity(Session.Lanes.Si
         }
     }
 
+    /// <summary>
+    /// Coalesces streaming updates from both lanes into at most ten renders per second so the
+    /// SignalR circuit is not flooded. Forced updates always render.
+    /// </summary>
     private Task RequestRenderAsync(bool force)
     {
         var now = Stopwatch.GetTimestamp();
-        var previous = Volatile.Read(ref _lastRenderTimestamp);
 
-        if (!force && Stopwatch.GetElapsedTime(previous, now) < TimeSpan.FromMilliseconds(100))
+        if (force)
+        {
+            Interlocked.Exchange(ref _lastRenderTimestamp, now);
+            return InvokeAsync(StateHasChanged);
+        }
+
+        var previous = Interlocked.Read(ref _lastRenderTimestamp);
+        if (Stopwatch.GetElapsedTime(previous, now) < RenderInterval)
         {
             return Task.CompletedTask;
         }
 
-        if (!force && Interlocked.CompareExchange(ref _lastRenderTimestamp, now, previous) != previous)
+        // Only the task that wins the exchange renders; the other lane skips this tick.
+        if (Interlocked.CompareExchange(ref _lastRenderTimestamp, now, previous) != previous)
         {
             return Task.CompletedTask;
         }
 
-        Volatile.Write(ref _lastRenderTimestamp, now);
         return InvokeAsync(StateHasChanged);
     }
 
@@ -283,7 +292,13 @@ AnthropicFoundryClient(...).AsIChatClient("@Session.GetIdentity(Session.Lanes.Si
 
     public void Dispose()
     {
-        _requestCancellation?.Cancel();
-        _requestCancellation?.Dispose();
+        var cancellation = Interlocked.Exchange(ref _requestCancellation, null);
+        if (cancellation is null)
+        {
+            return;
+        }
+
+        cancellation.Cancel();
+        cancellation.Dispose();
     }
 }

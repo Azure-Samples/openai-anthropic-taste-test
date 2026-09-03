@@ -13,6 +13,11 @@ indent_size = 4
 csharp_style_namespace_declarations = file_scoped:warning
 dotnet_sort_system_directives_first = true
 
+# Test methods use the Method_Scenario_Expectation convention, so the identifier naming rule
+# does not apply to them.
+[tests/**/*.cs]
+dotnet_diagnostic.CA1707.severity = none
+
 [*.{bicep,json,jsonc,yml,yaml}]
 indent_size = 2
 

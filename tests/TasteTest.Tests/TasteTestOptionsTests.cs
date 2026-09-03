@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
 
 namespace TasteTest.Tests;
 
@@ -27,13 +28,40 @@ public sealed class TasteTestOptionsTests
     }
 
     [Fact]
-    public void Validate_RequiresEndpointOutsideSampleMode()
+    public void FromConfiguration_PrefersEnvironmentVariablesOverSectionValues()
     {
-        var options = new TasteTestOptions();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                [$"{TasteTestOptions.SectionName}:AoaiDeploymentName"] = "from-section",
+                [$"{TasteTestOptions.SectionName}:MaxPromptCharacters"] = "1234",
+                ["AOAI_DEPLOYMENT_NAME"] = "from-environment"
+            })
+            .Build();
 
-        var exception = Assert.Throws<InvalidOperationException>(options.Validate);
+        var options = TasteTestOptions.FromConfiguration(configuration);
 
-        Assert.Contains("AZURE_FOUNDRY_ENDPOINT", exception.Message);
+        Assert.Equal("from-environment", options.AoaiDeploymentName);
+        Assert.Equal(1234, options.MaxPromptCharacters);
+    }
+
+    [Fact]
+    public void Validate_ReportsEveryProblemAtOnce()
+    {
+        var options = new TasteTestOptions
+        {
+            MaxOutputTokens = 1,
+            ClaudeDeploymentName = string.Empty
+        };
+
+        var errors = options.GetValidationErrors();
+
+        Assert.Contains(errors, error => error.Contains(nameof(TasteTestOptions.MaxOutputTokens), StringComparison.Ordinal));
+        Assert.Contains(errors, error => error.Contains("AZURE_FOUNDRY_ENDPOINT", StringComparison.Ordinal));
+        Assert.Contains(errors, error => error.Contains("CLAUDE_DEPLOYMENT_NAME", StringComparison.Ordinal));
+
+        var exception = Assert.Throws<OptionsValidationException>(options.Validate);
+        Assert.Contains("AZURE_FOUNDRY_ENDPOINT", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -42,6 +70,20 @@ public sealed class TasteTestOptionsTests
         var options = new TasteTestOptions
         {
             UseSampleResponses = true
+        };
+
+        options.Validate();
+
+        Assert.Empty(options.GetValidationErrors());
+    }
+
+    [Fact]
+    public void Validate_AcceptsProvisionedConfiguration()
+    {
+        var options = new TasteTestOptions
+        {
+            FoundryEndpoint = "https://sample.services.ai.azure.com",
+            FoundryResourceName = "sample"
         };
 
         options.Validate();

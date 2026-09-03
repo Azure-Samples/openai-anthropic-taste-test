@@ -65,11 +65,126 @@ public sealed class TasteTestSessionTests
 
         Assert.False(session.Revealed);
         Assert.Null(session.Winner);
+        Assert.False(session.HasTranscript);
         Assert.All(session.Lanes, lane =>
         {
             Assert.Empty(lane.Turns);
             Assert.Null(lane.ConversationId);
         });
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task SendAsync_RejectsEmptyPrompt(string prompt)
+    {
+        using var factory = new TrackingClientFactory();
+        var session = CreateSession(factory);
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => session.SendAsync(prompt, _ => Task.CompletedTask));
+
+        Assert.False(session.HasTranscript);
+        Assert.Equal(0, factory.OpenAI.CallCount);
+    }
+
+    [Fact]
+    public async Task SendAsync_RejectsPromptOverTheConfiguredLimit()
+    {
+        using var factory = new TrackingClientFactory();
+        var session = CreateSession(factory);
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => session.SendAsync(new string('a', session.MaxPromptCharacters + 1), _ => Task.CompletedTask));
+
+        Assert.Equal(0, factory.OpenAI.CallCount);
+    }
+
+    [Fact]
+    public async Task SendAsync_IsolatesAFailingLaneAndBlocksTheVote()
+    {
+        using var factory = new TrackingClientFactory();
+        factory.Anthropic.FailWith(new HttpRequestException("model unavailable"));
+        var session = CreateSession(factory);
+
+        await session.SendAsync("Compare these answers.", _ => Task.CompletedTask);
+
+        var healthy = session.Lanes.Single(lane => !lane.HasError);
+        var failed = session.Lanes.Single(lane => lane.HasError);
+
+        Assert.NotEmpty(healthy.Turns[0].Response);
+        Assert.False(session.CanPick);
+        Assert.Throws<InvalidOperationException>(() => session.PickWinner(healthy));
+
+        // The generic message must not identify the provider before the reveal.
+        Assert.DoesNotContain("Anthropic", failed.Error!, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("model unavailable", failed.Error!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task SendAsync_RecoversAfterAFailedLaneRetries()
+    {
+        using var factory = new TrackingClientFactory();
+        factory.Anthropic.FailWith(new HttpRequestException("transient"));
+        var session = CreateSession(factory);
+
+        await session.SendAsync("First prompt", _ => Task.CompletedTask);
+        Assert.False(session.CanPick);
+
+        factory.Anthropic.FailWith(null);
+        await session.SendAsync("Second prompt", _ => Task.CompletedTask);
+
+        Assert.True(session.CanPick);
+        Assert.All(session.Lanes, lane => Assert.False(lane.HasError));
+    }
+
+    [Fact]
+    public async Task GetIdentity_ByProviderIsAvailableOnlyAfterReveal()
+    {
+        using var factory = new TrackingClientFactory();
+        var session = CreateSession(factory);
+
+        Assert.Throws<InvalidOperationException>(() => session.GetIdentity(ProviderKind.OpenAI));
+
+        await session.SendAsync("First prompt", _ => Task.CompletedTask);
+        session.PickWinner(session.Lanes[0]);
+
+        Assert.Equal("OpenAI", session.GetIdentity(ProviderKind.OpenAI).Provider);
+        Assert.Equal("Anthropic", session.GetIdentity(ProviderKind.Anthropic).Provider);
+    }
+
+    [Fact]
+    public async Task PickWinner_RejectsALaneFromAnotherSession()
+    {
+        using var factory = new TrackingClientFactory();
+        var session = CreateSession(factory);
+        using var otherFactory = new TrackingClientFactory();
+        var otherSession = CreateSession(otherFactory);
+
+        await session.SendAsync("First prompt", _ => Task.CompletedTask);
+
+        Assert.Throws<ArgumentException>(() => session.PickWinner(otherSession.Lanes[0]));
+    }
+
+    [Fact]
+    public async Task SendAsync_ForcesARenderWhenEachLaneStartsAndStops()
+    {
+        using var factory = new TrackingClientFactory();
+        var session = CreateSession(factory);
+        var forcedRenders = 0;
+
+        await session.SendAsync("First prompt", force =>
+        {
+            if (force)
+            {
+                Interlocked.Increment(ref forcedRenders);
+            }
+
+            return Task.CompletedTask;
+        });
+
+        // Two lanes: start plus completion each, and one final render when the session settles.
+        Assert.Equal(5, forcedRenders);
     }
 
     private static TasteTestSession CreateSession(IModelChatClientFactory factory) =>
@@ -115,9 +230,13 @@ public sealed class TasteTestSessionTests
         string responseText,
         ConcurrencyProbe? probe) : IChatClient
     {
+        private Exception? _failure;
+
         public int CallCount { get; private set; }
 
         public List<int> MessageCounts { get; } = [];
+
+        public void FailWith(Exception? failure) => _failure = failure;
 
         public Task<ChatResponse> GetResponseAsync(
             IEnumerable<ChatMessage> messages,
@@ -137,6 +256,11 @@ public sealed class TasteTestSessionTests
             if (probe is not null)
             {
                 await probe.EnterAsync(cancellationToken);
+            }
+
+            if (_failure is not null)
+            {
+                throw _failure;
             }
 
             yield return new ChatResponseUpdate(ChatRole.Assistant, responseText);

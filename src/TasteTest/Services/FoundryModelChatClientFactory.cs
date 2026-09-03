@@ -56,24 +56,11 @@ public sealed class FoundryModelChatClientFactory : IModelChatClientFactory, IDi
         {
             ProviderKind.OpenAI => _openAI,
             ProviderKind.Anthropic => _anthropic,
-            _ => throw new ArgumentOutOfRangeException(nameof(provider))
+            _ => throw ModelCatalog.UnknownProvider(provider)
         };
 
     public ModelIdentity GetIdentity(ProviderKind provider) =>
-        provider switch
-        {
-            ProviderKind.OpenAI => new(
-                "OpenAI",
-                _options.AoaiDeploymentName,
-                "Responses API",
-                "OpenAI SDK for .NET"),
-            ProviderKind.Anthropic => new(
-                "Anthropic",
-                _options.ClaudeDeploymentName,
-                "Messages API",
-                "Anthropic C# SDK"),
-            _ => throw new ArgumentOutOfRangeException(nameof(provider))
-        };
+        ModelCatalog.CreateIdentity(provider, _options);
 
     public void Dispose()
     {

@@ -37,13 +37,4 @@ public sealed class TasteTestLane
         Error = null;
         return turn;
     }
-
-    internal void Reset()
-    {
-        _history.Clear();
-        _turns.Clear();
-        ConversationId = null;
-        Error = null;
-        IsStreaming = false;
-    }
 }

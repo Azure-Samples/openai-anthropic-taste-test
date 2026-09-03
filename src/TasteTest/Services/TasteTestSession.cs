@@ -1,12 +1,19 @@
-using System.Diagnostics;
+using System.ClientModel;
 using Anthropic.Exceptions;
 using Azure.Identity;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
-using System.ClientModel;
 
 namespace TasteTest.Services;
 
+/// <summary>
+/// Owns one blind comparison for a single Blazor circuit: lane ordering, symmetric history,
+/// concurrent streaming, and the reveal.
+/// </summary>
+/// <remarks>
+/// Rendering is deliberately not throttled here. This type reports every update and the component
+/// decides how often to re-render, so the SignalR circuit has exactly one throttle.
+/// </remarks>
 public sealed class TasteTestSession
 {
     private readonly IModelChatClientFactory _clients;
@@ -21,6 +28,11 @@ public sealed class TasteTestSession
         IOptions<TasteTestOptions> options,
         ILogger<TasteTestSession> logger)
     {
+        ArgumentNullException.ThrowIfNull(clients);
+        ArgumentNullException.ThrowIfNull(randomizer);
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(logger);
+
         _clients = clients;
         _randomizer = randomizer;
         _options = options.Value;
@@ -30,8 +42,9 @@ public sealed class TasteTestSession
 
     public IReadOnlyList<TasteTestLane> Lanes => _lanes;
 
-    public IEnumerable<TasteTestLane> VisibleLanes =>
-        Revealed && Winner is not null ? [Winner] : _lanes;
+    /// <summary>Lanes to render: both while blind, only the winner after the reveal.</summary>
+    public IReadOnlyList<TasteTestLane> VisibleLanes =>
+        Winner is { } winner ? [winner] : _lanes;
 
     public TasteTestLane? Winner { get; private set; }
 
@@ -39,10 +52,13 @@ public sealed class TasteTestSession
 
     public bool IsBusy { get; private set; }
 
+    public bool HasTranscript => _lanes.Exists(lane => lane.Turns.Count > 0);
+
     public bool CanPick =>
         !Revealed &&
         !IsBusy &&
-        _lanes.All(lane => lane.Turns.Count > 0 && !lane.HasError);
+        _lanes.TrueForAll(lane => lane.Turns.Count > 0 && !lane.HasError);
+
 
     public bool UseSampleResponses => _options.UseSampleResponses;
 
@@ -50,11 +66,21 @@ public sealed class TasteTestSession
 
     public int MaxPromptCharacters => _options.MaxPromptCharacters;
 
+    /// <summary>
+    /// Sends the prompt to every active lane at once and streams each answer back.
+    /// </summary>
+    /// <param name="prompt">The prompt to send to each active lane.</param>
+    /// <param name="notifyProgress">
+    /// Invoked as content arrives. The argument is <see langword="true"/> for state changes that
+    /// must render immediately, such as a lane starting, failing, or finishing.
+    /// </param>
+    /// <param name="cancellationToken">Cancels every in-flight lane.</param>
     public async Task SendAsync(
         string prompt,
         Func<bool, Task> notifyProgress,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(prompt);
         ArgumentNullException.ThrowIfNull(notifyProgress);
 
         if (IsBusy)
@@ -76,13 +102,12 @@ public sealed class TasteTestSession
         }
 
         IsBusy = true;
-        var targets = Revealed && Winner is not null ? [Winner] : _lanes.ToArray();
+        var targets = VisibleLanes;
 
         try
         {
-            await Task.WhenAll(
-                targets.Select(lane =>
-                    StreamLaneAsync(lane, normalizedPrompt, notifyProgress, cancellationToken)));
+            await Task.WhenAll(targets.Select(lane =>
+                StreamLaneAsync(lane, normalizedPrompt, notifyProgress, cancellationToken)));
         }
         finally
         {
@@ -95,40 +120,44 @@ public sealed class TasteTestSession
     {
         ArgumentNullException.ThrowIfNull(lane);
 
+        if (!_lanes.Contains(lane))
+        {
+            throw new ArgumentException("The selected lane does not belong to this session.", nameof(lane));
+        }
+
         if (!CanPick)
         {
             throw new InvalidOperationException(
                 "Wait for both lanes to finish successfully before picking a winner.");
         }
 
-        if (!_lanes.Contains(lane))
-        {
-            throw new ArgumentException("The selected lane does not belong to this session.", nameof(lane));
-        }
-
         Winner = lane;
     }
 
+    /// <summary>Model metadata for a lane. Available only after a winner is picked.</summary>
     public ModelIdentity GetIdentity(TasteTestLane lane)
+    {
+        ArgumentNullException.ThrowIfNull(lane);
+        return GetIdentity(lane.Provider);
+    }
+
+    /// <summary>Model metadata for a provider. Available only after a winner is picked.</summary>
+    public ModelIdentity GetIdentity(ProviderKind provider)
     {
         if (!Revealed)
         {
             throw new InvalidOperationException("Model identity is available only after reveal.");
         }
 
-        return _clients.GetIdentity(lane.Provider);
+        return _clients.GetIdentity(provider);
     }
 
+    /// <summary>Starts a fresh blind comparison with a newly randomized lane order.</summary>
     public void Reset()
     {
         if (IsBusy)
         {
             throw new InvalidOperationException("Cancel the active response before resetting.");
-        }
-
-        foreach (var lane in _lanes)
-        {
-            lane.Reset();
         }
 
         Winner = null;
@@ -144,7 +173,6 @@ public sealed class TasteTestSession
         var turn = lane.BeginTurn(prompt);
         var updates = new List<ChatResponseUpdate>();
         var client = _clients.GetClient(lane.Provider);
-        var renderTimer = Stopwatch.StartNew();
 
         lane.IsStreaming = true;
         await notifyProgress(true);
@@ -162,19 +190,16 @@ public sealed class TasteTestSession
                 .ConfigureAwait(false))
             {
                 updates.Add(update);
-                turn.Response += update.Text;
-
-                if (renderTimer.Elapsed >= TimeSpan.FromMilliseconds(100))
-                {
-                    renderTimer.Restart();
-                    await notifyProgress(false);
-                }
+                turn.AppendResponse(update.Text);
+                await notifyProgress(false);
             }
 
             var response = updates.ToChatResponse();
             turn.Usage = response.Usage;
             lane.ConversationId = response.ConversationId;
 
+            // Prefer the provider's own assistant messages so tool calls and multi-part content
+            // survive into the next turn; fall back to the streamed text when none were returned.
             if (response.Messages.Count > 0)
             {
                 lane.History.AddMessages(response);
@@ -184,26 +209,23 @@ public sealed class TasteTestSession
                 lane.History.Add(new ChatMessage(ChatRole.Assistant, turn.Response));
             }
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
             lane.Error = "Response canceled.";
             throw;
         }
-        catch (AuthenticationFailedException exception)
+        catch (Exception exception) when (exception is
+            AuthenticationFailedException or
+            ClientResultException or
+            AnthropicApiException or
+            HttpRequestException or
+            TimeoutException)
         {
-            await RecordFailureAsync(lane, exception, notifyProgress);
-        }
-        catch (ClientResultException exception)
-        {
-            await RecordFailureAsync(lane, exception, notifyProgress);
-        }
-        catch (AnthropicApiException exception)
-        {
-            await RecordFailureAsync(lane, exception, notifyProgress);
-        }
-        catch (HttpRequestException exception)
-        {
-            await RecordFailureAsync(lane, exception, notifyProgress);
+            // Keep the other lane usable, and never surface provider detail to the browser because
+            // that would leak the hidden identity before the reveal.
+            lane.Error =
+                "This lane could not complete. Check model availability, quota, RBAC, and the server logs.";
+            TasteTestLog.LaneFailed(_logger, exception, lane.Label, lane.Provider);
         }
         finally
         {
@@ -212,27 +234,16 @@ public sealed class TasteTestSession
         }
     }
 
-    private async Task RecordFailureAsync(
-        TasteTestLane lane,
-        Exception exception,
-        Func<bool, Task> notifyProgress)
-    {
-        lane.Error =
-            "This lane could not complete. Check model availability, quota, RBAC, and the server logs.";
-        _logger.LogError(exception, "Taste-test lane {Lane} failed for {Provider}.", lane.Label, lane.Provider);
-        await notifyProgress(true);
-    }
-
     private List<TasteTestLane> CreateLanes()
     {
-        var providers = _randomizer.PlaceOpenAIFirst()
-            ? new[] { ProviderKind.OpenAI, ProviderKind.Anthropic }
-            : new[] { ProviderKind.Anthropic, ProviderKind.OpenAI };
+        var (first, second) = _randomizer.PlaceOpenAIFirst()
+            ? (ProviderKind.OpenAI, ProviderKind.Anthropic)
+            : (ProviderKind.Anthropic, ProviderKind.OpenAI);
 
         return
         [
-            new TasteTestLane("A", providers[0]),
-            new TasteTestLane("B", providers[1])
+            new TasteTestLane("A", first),
+            new TasteTestLane("B", second)
         ];
     }
 }

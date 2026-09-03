@@ -6,8 +6,8 @@ namespace TasteTest.Services;
 
 public sealed class SampleModelChatClientFactory : IModelChatClientFactory, IDisposable
 {
-    private readonly IChatClient _openAI;
-    private readonly IChatClient _anthropic;
+    private readonly SampleChatClient _openAI;
+    private readonly SampleChatClient _anthropic;
     private readonly TasteTestOptions _options;
 
     public SampleModelChatClientFactory(IOptions<TasteTestOptions> options)
@@ -28,24 +28,11 @@ public sealed class SampleModelChatClientFactory : IModelChatClientFactory, IDis
         {
             ProviderKind.OpenAI => _openAI,
             ProviderKind.Anthropic => _anthropic,
-            _ => throw new ArgumentOutOfRangeException(nameof(provider))
+            _ => throw ModelCatalog.UnknownProvider(provider)
         };
 
     public ModelIdentity GetIdentity(ProviderKind provider) =>
-        provider switch
-        {
-            ProviderKind.OpenAI => new(
-                "OpenAI",
-                _options.AoaiDeploymentName,
-                "Responses API",
-                "OpenAI SDK for .NET"),
-            ProviderKind.Anthropic => new(
-                "Anthropic",
-                _options.ClaudeDeploymentName,
-                "Messages API",
-                "Anthropic C# SDK"),
-            _ => throw new ArgumentOutOfRangeException(nameof(provider))
-        };
+        ModelCatalog.CreateIdentity(provider, _options);
 
     public void Dispose()
     {
