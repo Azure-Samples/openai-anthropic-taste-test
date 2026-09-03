@@ -1,0 +1,33 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "build",
+        "OpenAIAnthropicTasteTest.slnx"
+      ],
+      "problemMatcher": "$msCompile",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "run sample UI",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "run",
+        "--project",
+        "src/TasteTest",
+        "--launch-profile",
+        "sample"
+      ],
+      "isBackground": true,
+      "problemMatcher": "$msCompile"
+    }
+  ]
+}

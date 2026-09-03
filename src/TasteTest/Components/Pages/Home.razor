@@ -1,0 +1,289 @@
+@page "/"
+@using System.Diagnostics
+@implements IDisposable
+@inject TasteTestSession Session
+
+<PageTitle>Blind A/B Model Taste Test</PageTitle>
+
+<main class="taste-shell">
+    <header class="hero">
+        <div>
+            <p class="eyebrow">MICROSOFT FOUNDRY</p>
+            <h1>Blind model taste test</h1>
+            <p class="hero-copy">
+                One prompt. Two current-generation models. Same <code>IChatClient</code> interface.
+                Pick the answer you would ship.
+            </p>
+        </div>
+        <div class="blind-badge" aria-label="Provider identities are hidden">
+            <span class="blind-dot"></span>
+            Blind until you vote
+        </div>
+    </header>
+
+    @if (Session.UseSampleResponses)
+    {
+        <div class="sample-notice" role="status">
+            Local sample mode is on. Responses are deterministic and no model endpoint is called.
+        </div>
+    }
+
+    @if (!Session.Revealed && !Session.Lanes.Any(lane => lane.Turns.Count > 0))
+    {
+        <section class="seed-section" aria-labelledby="seed-heading">
+            <div class="section-heading">
+                <span>01</span>
+                <h2 id="seed-heading">Choose a prompt with room for judgment</h2>
+            </div>
+            <div class="seed-grid">
+                @foreach (var seed in Session.SeedPrompts)
+                {
+                    <button type="button" class="seed-card" @onclick="() => SelectPrompt(seed)">
+                        @seed
+                    </button>
+                }
+            </div>
+        </section>
+    }
+
+    <section class="lane-grid @(Session.Revealed ? "lane-grid-revealed" : null)" aria-label="Model responses">
+        @foreach (var lane in Session.VisibleLanes)
+        {
+            <article class="lane-card">
+                <header class="lane-header">
+                    <div class="lane-letter">@lane.Label</div>
+                    <div>
+                        <p class="lane-kicker">LANE @lane.Label</p>
+                        <h2>@(Session.Revealed ? "Your winner" : "Identity hidden")</h2>
+                    </div>
+                    @if (lane.IsStreaming)
+                    {
+                        <span class="stream-status"><span></span> Streaming</span>
+                    }
+                </header>
+
+                <div class="lane-transcript" aria-live="polite" aria-busy="@lane.IsStreaming">
+                    @if (lane.Turns.Count == 0)
+                    {
+                        <div class="empty-lane">
+                            <span>@lane.Label</span>
+                            <p>Waiting for the same prompt as the other lane.</p>
+                        </div>
+                    }
+
+                    @foreach (var turn in lane.Turns)
+                    {
+                        <div class="turn">
+                            <div class="turn-label">You</div>
+                            <p class="turn-prompt">@turn.Prompt</p>
+                            <div class="turn-label">Answer</div>
+                            @if (lane.IsStreaming && string.IsNullOrEmpty(turn.Response))
+                            {
+                                <div class="thinking">
+                                    <span></span><span></span><span></span>
+                                    <em>Thinking</em>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="turn-response">@turn.Response</div>
+                            }
+                        </div>
+                    }
+
+                    @if (lane.Error is not null)
+                    {
+                        <div class="lane-error" role="alert">@lane.Error</div>
+                    }
+                </div>
+            </article>
+        }
+    </section>
+
+    @if (Session.CanPick)
+    {
+        <section class="vote-panel" aria-labelledby="vote-heading">
+            <div>
+                <p class="eyebrow">THE REVEAL</p>
+                <h2 id="vote-heading">Which answer wins?</h2>
+            </div>
+            <div class="vote-actions">
+                @foreach (var lane in Session.Lanes)
+                {
+                    <button type="button" class="vote-button" @onclick="() => Pick(lane)">
+                        Pick @lane.Label
+                    </button>
+                }
+            </div>
+        </section>
+    }
+
+    @if (Session.Revealed)
+    {
+        <section class="reveal-panel" aria-labelledby="reveal-heading">
+            <div class="section-heading reveal-heading">
+                <span>02</span>
+                <h2 id="reveal-heading">The identities</h2>
+            </div>
+            <div class="identity-grid">
+                @foreach (var lane in Session.Lanes)
+                {
+                    var identity = Session.GetIdentity(lane);
+                    <article class="identity-card @(ReferenceEquals(lane, Session.Winner) ? "identity-winner" : null)">
+                        <div class="identity-lane">@lane.Label</div>
+                        <div>
+                            <p>@identity.Provider · @identity.Protocol</p>
+                            <h3>@identity.ModelId</h3>
+                            <span>@identity.Sdk</span>
+                        </div>
+                        @if (ReferenceEquals(lane, Session.Winner))
+                        {
+                            <strong>WINNER</strong>
+                        }
+                    </article>
+                }
+            </div>
+
+            <div class="construction-diff">
+                <div>
+                    <p class="eyebrow">SAME ABSTRACTION, DIFFERENT WIRE</p>
+                    <h3>Both lanes end as <code>IChatClient</code></h3>
+                </div>
+                <pre><code>GetResponsesClient().AsIChatClient("@Session.GetIdentity(Session.Lanes.Single(lane => Session.GetIdentity(lane).Provider == "OpenAI")).ModelId")
+
+AnthropicFoundryClient(...).AsIChatClient("@Session.GetIdentity(Session.Lanes.Single(lane => Session.GetIdentity(lane).Provider == "Anthropic")).ModelId")</code></pre>
+            </div>
+        </section>
+    }
+
+    <section class="composer-section" aria-label="Prompt composer">
+        @if (ErrorMessage is not null)
+        {
+            <div class="form-error" role="alert">@ErrorMessage</div>
+        }
+        <form class="composer" @onsubmit="SubmitAsync" @onsubmit:preventDefault>
+            <label for="taste-prompt">
+                @(Session.Revealed ? "Continue with the winner" : "Send the same prompt to both lanes")
+            </label>
+            <textarea id="taste-prompt"
+                      @bind="Prompt"
+                      @bind:event="oninput"
+                      maxlength="@Session.MaxPromptCharacters"
+                      rows="3"
+                      disabled="@Session.IsBusy"
+                      placeholder="Ask for an explanation, a judgment call, or a rewrite..."></textarea>
+            <div class="composer-actions">
+                <span>@Prompt.Length / @Session.MaxPromptCharacters</span>
+                @if (Session.IsBusy)
+                {
+                    <button type="button" class="button-secondary" @onclick="Cancel">Cancel</button>
+                }
+                @if (Session.Revealed)
+                {
+                    <button type="button" class="button-secondary" @onclick="NewTasteTest">New taste test</button>
+                }
+                <button type="submit" class="button-primary" disabled="@(Session.IsBusy || string.IsNullOrWhiteSpace(Prompt))">
+                    @(Session.Revealed ? "Ask winner" : "Start taste test")
+                </button>
+            </div>
+        </form>
+    </section>
+
+    @if (Session.Revealed)
+    {
+        <footer class="model-footer">
+            @foreach (var lane in Session.Lanes)
+            {
+                <span>Lane @lane.Label · @Session.GetIdentity(lane).ModelId</span>
+            }
+        </footer>
+    }
+</main>
+
+@code {
+    private CancellationTokenSource? _requestCancellation;
+    private long _lastRenderTimestamp;
+
+    private string Prompt { get; set; } = string.Empty;
+
+    private string? ErrorMessage { get; set; }
+
+    private void SelectPrompt(string prompt)
+    {
+        Prompt = prompt;
+        ErrorMessage = null;
+    }
+
+    private async Task SubmitAsync()
+    {
+        ErrorMessage = null;
+        _requestCancellation?.Dispose();
+        _requestCancellation = new CancellationTokenSource();
+
+        try
+        {
+            var submittedPrompt = Prompt;
+            Prompt = string.Empty;
+            await Session.SendAsync(
+                submittedPrompt,
+                RequestRenderAsync,
+                _requestCancellation.Token);
+        }
+        catch (ArgumentException exception)
+        {
+            ErrorMessage = exception.Message;
+        }
+        catch (InvalidOperationException exception)
+        {
+            ErrorMessage = exception.Message;
+        }
+        catch (OperationCanceledException) when (_requestCancellation.IsCancellationRequested)
+        {
+            ErrorMessage = "The response was canceled.";
+        }
+        finally
+        {
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private Task RequestRenderAsync(bool force)
+    {
+        var now = Stopwatch.GetTimestamp();
+        var previous = Volatile.Read(ref _lastRenderTimestamp);
+
+        if (!force && Stopwatch.GetElapsedTime(previous, now) < TimeSpan.FromMilliseconds(100))
+        {
+            return Task.CompletedTask;
+        }
+
+        if (!force && Interlocked.CompareExchange(ref _lastRenderTimestamp, now, previous) != previous)
+        {
+            return Task.CompletedTask;
+        }
+
+        Volatile.Write(ref _lastRenderTimestamp, now);
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private void Pick(TasteTestLane lane)
+    {
+        Session.PickWinner(lane);
+        ErrorMessage = null;
+    }
+
+    private void NewTasteTest()
+    {
+        Session.Reset();
+        Prompt = string.Empty;
+        ErrorMessage = null;
+    }
+
+    private void Cancel() => _requestCancellation?.Cancel();
+
+    public void Dispose()
+    {
+        _requestCancellation?.Cancel();
+        _requestCancellation?.Dispose();
+    }
+}

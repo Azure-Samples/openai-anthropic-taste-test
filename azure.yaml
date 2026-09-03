@@ -1,0 +1,44 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+name: openai-anthropic-taste-test
+metadata:
+  template: openai-anthropic-taste-test@0.1.0
+requiredVersions:
+  azd: ">= 1.17.0"
+infra:
+  provider: bicep
+  path: infra
+  module: main
+services:
+  web:
+    project: ./src/TasteTest
+    host: containerapp
+    language: dotnet
+    docker:
+      path: ./Dockerfile
+      context: .
+      remoteBuild: true
+hooks:
+  preprovision:
+    windows:
+      shell: pwsh
+      run: pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/preflight-models.ps1
+    posix:
+      shell: sh
+      run: bash ./scripts/preflight-models.sh
+pipeline:
+  variables:
+    - AZURE_TENANT_ID
+    - AZURE_SUBSCRIPTION_ID
+    - AZURE_LOCATION
+    - CLAUDE_MODEL_NAME
+    - CLAUDE_MODEL_VERSION
+    - CLAUDE_MODEL_CAPACITY
+    - CLAUDE_ORGANIZATION_NAME
+    - CLAUDE_COUNTRY_CODE
+    - CLAUDE_INDUSTRY
+    - AOAI_MODEL_NAME
+    - AOAI_MODEL_VERSION
+    - AOAI_MODEL_CAPACITY
+    - TASTE_TEST_MAX_OUTPUT_TOKENS
+    - CONTAINER_MIN_REPLICAS

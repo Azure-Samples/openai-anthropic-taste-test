@@ -1,0 +1,27 @@
+# azd environment state
+.azure/
+
+# .NET
+**/bin/
+**/obj/
+*.user
+*.suo
+
+# IDEs and operating systems
+.vs/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local configuration and logs
+.env
+.env.*
+!.env.sample
+*.log
+TestResults/
+coverage/
+speclet.md
