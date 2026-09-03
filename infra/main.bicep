@@ -74,6 +74,26 @@ param maxOutputTokens int = 900
 @maxValue(1)
 param containerMinReplicas int = 1
 
+@description('''
+Where the application runs. "containerapp" provisions Azure hosting and needs permission to create
+role assignments. "local" provisions only the Foundry account and both model deployments, creates no
+role assignments, and is meant for running the app on your own machine under your own Entra identity.
+''')
+@allowed([
+  'containerapp'
+  'local'
+])
+param hostingMode string = 'containerapp'
+
+@description('''
+Grants the deploying principal the Cognitive Services User role on the Foundry account. Set this to
+false when you lack Microsoft.Authorization/roleAssignments/write and already have Foundry data
+access through another role such as Azure AI Developer.
+''')
+param assignInferenceRoleToDeployer bool = true
+
+var deployApplicationHost = hostingMode == 'containerapp'
+
 var suffix = take(uniqueString(subscription().id, environmentName, location), 8)
 var resourceGroupName = 'rg-${environmentName}'
 var tags = {
@@ -106,11 +126,14 @@ module application 'resources.bicep' = {
     claudeIndustry: claudeIndustry
     maxOutputTokens: maxOutputTokens
     containerMinReplicas: containerMinReplicas
+    deployApplicationHost: deployApplicationHost
+    assignInferenceRoleToDeployer: assignInferenceRoleToDeployer
   }
 }
 
 output AZURE_LOCATION string = location
 output AZURE_RESOURCE_GROUP string = resourceGroup.name
+output HOSTING_MODE string = hostingMode
 output AZURE_FOUNDRY_RESOURCE_NAME string = application.outputs.foundryResourceName
 output AZURE_FOUNDRY_ENDPOINT string = application.outputs.foundryEndpoint
 output AZURE_AI_PROJECT_ENDPOINT string = application.outputs.foundryProjectEndpoint

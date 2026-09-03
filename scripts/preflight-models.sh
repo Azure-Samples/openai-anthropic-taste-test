@@ -37,8 +37,8 @@ echo "Preflight: Claude Hosted on Azure requires a paid Marketplace-eligible sub
 
 PERMISSIONS_URI="https://management.azure.com/subscriptions/$SUBSCRIPTION_ID/providers/Microsoft.Authorization/permissions?api-version=2015-07-01"
 ROLE_ASSIGNMENT_GRANTS="$(az rest --method get --url "$PERMISSIONS_URI" --query "length(value[?contains(actions, '*') || contains(actions, 'Microsoft.Authorization/roleAssignments/write')])" -o tsv 2>/dev/null || true)"
-if [ "$ROLE_ASSIGNMENT_GRANTS" = "0" ]; then
-  warn "The signed-in principal does not appear to have roleAssignments/write. Owner or User Access Administrator is required for the Entra-only app and ACR pull assignments."
+if [ "$ROLE_ASSIGNMENT_GRANTS" = "0" ] && [ "${HOSTING_MODE:-containerapp}" != "local" ]; then
+  warn "The signed-in principal does not appear to have Microsoft.Authorization/roleAssignments/write, which Azure hosting requires. Either request the Role Based Access Control Administrator role, or provision models only and run the app locally: azd env set HOSTING_MODE local && azd env set ASSIGN_INFERENCE_ROLE_TO_DEPLOYER false"
 fi
 
 check_quota() {

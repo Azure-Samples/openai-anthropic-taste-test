@@ -43,6 +43,12 @@
     },
     "containerMinReplicas": {
       "value": "${CONTAINER_MIN_REPLICAS=1}"
+    },
+    "hostingMode": {
+      "value": "${HOSTING_MODE=containerapp}"
+    },
+    "assignInferenceRoleToDeployer": {
+      "value": "${ASSIGN_INFERENCE_ROLE_TO_DEPLOYER=true}"
     }
   }
 }

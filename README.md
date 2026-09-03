@@ -120,6 +120,28 @@ await Task.WhenAll(lanes.Select(async lane =>
 
 Claude partner models do not support every subscription type. CSP, free-trial, student, credit-only, and some sponsored subscriptions can be ineligible. See [Deploy and use Claude models in Microsoft Foundry](https://learn.microsoft.com/azure/foundry/foundry-models/how-to/use-foundry-models-claude).
 
+### If you cannot create role assignments
+
+Azure hosting needs `Microsoft.Authorization/roleAssignments/write`, which `Contributor`, `Azure AI Developer`, and `Foundry Owner` do not grant. Ask for `Role Based Access Control Administrator` (or `Owner`) at subscription scope.
+
+You do not have to wait for that. Local hosting mode provisions only the Foundry account and both model deployments, creates no role assignments, and runs the app on your machine under your own Entra identity:
+
+```powershell
+azd env set HOSTING_MODE local
+azd env set ASSIGN_INFERENCE_ROLE_TO_DEPLOYER false
+azd provision
+./scripts/run-local.ps1
+```
+
+Use `azd provision` rather than `azd up`, because this mode intentionally deploys no Azure hosting. Your account still needs Foundry data access, which `Azure AI Developer`, `Foundry Owner`, or `Cognitive Services User` provides. Leave `ASSIGN_INFERENCE_ROLE_TO_DEPLOYER` at its default of `true` when you do hold RBAC-administration rights and want the template to grant that access for you.
+
+Switch to Azure hosting later without recreating anything:
+
+```powershell
+azd env set HOSTING_MODE containerapp
+azd up
+```
+
 ## Deploy
 
 The default `azd auth login` flow opens the enterprise browser sign-in. Device-code login is not required.
@@ -270,6 +292,14 @@ Confirm subscription Marketplace eligibility, organization metadata, and the Hos
 ### One lane returns 403
 
 RBAC can take several minutes to propagate after first provision. Confirm that the app identity has `Cognitive Services User` on the Foundry account, then create a new Container Apps revision or retry.
+
+### Provisioning fails with `Authorization failed ... roleAssignments/write`
+
+Your account can create resources but not role assignments. Request `Role Based Access Control Administrator` at subscription scope, or use the local hosting mode described in [If you cannot create role assignments](#if-you-cannot-create-role-assignments).
+
+### Claude deployment fails with `no valid payment method`
+
+The subscription cannot purchase Marketplace offers. Anthropic models require an active paid billing instrument; Azure credits alone are not sufficient. Use a subscription with a payment method, or deploy only the OpenAI lane by pointing `CLAUDE_MODEL_NAME` at a model your subscription can provision.
 
 ### Streaming disconnects after scaling
 
