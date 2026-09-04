@@ -6,7 +6,7 @@
 
 A blind, side-by-side taste test of Claude and GPT models on Microsoft Foundry. The app uses the official Anthropic C# SDK and OpenAI SDK for .NET behind one `Microsoft.Extensions.AI.IChatClient` interface.
 
-![Architecture showing the Blazor taste-test app, passwordless authentication, and two Foundry model deployments](docs/img/architecture.png)
+![One IChatClient fans out to the OpenAI SDK for .NET over the Responses API and the Anthropic C# SDK over the Messages API, reaching gpt-5.6-sol and claude-opus-5 on Microsoft Foundry](docs/img/architecture.png)
 
 ## See the experience
 
