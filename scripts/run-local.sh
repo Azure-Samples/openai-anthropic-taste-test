@@ -2,5 +2,17 @@
 
 set -euo pipefail
 
-eval "$(azd env get-values)"
-dotnet run --project ./src/TasteTest --no-launch-profile
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+values="$(azd env get-values)"
+while IFS='=' read -r name value; do
+  case "$name" in
+    AZURE_FOUNDRY_ENDPOINT|AZURE_FOUNDRY_RESOURCE_NAME|AOAI_DEPLOYMENT_NAME|CLAUDE_DEPLOYMENT_NAME|AZURE_TENANT_ID|TASTE_TEST_MAX_OUTPUT_TOKENS)
+      value="${value%$'\r'}"
+      value="${value#\"}"
+      value="${value%\"}"
+      export "$name=$value"
+      ;;
+  esac
+done <<< "$values"
+export TASTE_TEST_USE_SAMPLE_RESPONSES=false
+exec dotnet run --project ./src/TasteTest --launch-profile http

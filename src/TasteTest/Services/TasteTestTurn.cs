@@ -44,6 +44,21 @@ public sealed class TasteTestTurn
 
     public UsageDetails? Usage { get; internal set; }
 
+    /// <summary>
+    /// Time from request start to the first streamed token. Measured identically for both lanes so
+    /// the OpenAI Responses stream and the Anthropic Messages stream stay directly comparable.
+    /// </summary>
+    public TimeSpan? TimeToFirstToken { get; internal set; }
+
+    /// <summary>Total time from request start until the lane stopped streaming.</summary>
+    public TimeSpan? Duration { get; internal set; }
+
+    public bool IsStreaming { get; internal set; } = true;
+
+    public bool IncludedInHistory { get; internal set; }
+
+    public string? Error { get; internal set; }
+
     internal void AppendResponse(string? text)
     {
         if (string.IsNullOrEmpty(text))

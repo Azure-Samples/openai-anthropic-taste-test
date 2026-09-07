@@ -88,4 +88,18 @@ public sealed class TasteTestOptionsTests
 
         options.Validate();
     }
+
+    [Theory]
+    [InlineData("TASTE_TEST_USE_SAMPLE_RESPONSES", "not-a-boolean")]
+    [InlineData("TASTE_TEST_MAX_OUTPUT_TOKENS", "not-a-number")]
+    public void FromConfiguration_RejectsMalformedOverrides(string key, string value)
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { [key] = value })
+            .Build();
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => TasteTestOptions.FromConfiguration(configuration));
+        Assert.Contains(key, exception.Message, StringComparison.Ordinal);
+    }
 }

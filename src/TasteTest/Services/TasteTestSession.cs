@@ -1,4 +1,5 @@
 using System.ClientModel;
+using System.Diagnostics;
 using Anthropic.Exceptions;
 using Azure.Identity;
 using Microsoft.Extensions.AI;
@@ -57,8 +58,7 @@ public sealed class TasteTestSession
     public bool CanPick =>
         !Revealed &&
         !IsBusy &&
-        _lanes.TrueForAll(lane => lane.Turns.Count > 0 && !lane.HasError);
-
+        _lanes.TrueForAll(lane => lane.LatestTurn is { IncludedInHistory: true });
 
     public bool UseSampleResponses => _options.UseSampleResponses;
 
@@ -101,13 +101,31 @@ public sealed class TasteTestSession
                 nameof(prompt));
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         IsBusy = true;
-        var targets = VisibleLanes;
+        var attempts = VisibleLanes
+            .Select(lane => (Lane: lane, Turn: lane.BeginTurn(normalizedPrompt)))
+            .ToArray();
 
         try
         {
-            await Task.WhenAll(targets.Select(lane =>
-                StreamLaneAsync(lane, normalizedPrompt, notifyProgress, cancellationToken)));
+            var responses = await Task.WhenAll(attempts.Select(attempt =>
+                StreamLaneAsync(attempt.Lane, attempt.Turn, notifyProgress, cancellationToken)));
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // A comparison is one transaction: a failed lane must not leave the other lane
+            // with extra context when the user retries. UI transcripts retain partial answers.
+            if (responses.All(response => response is not null))
+            {
+                for (var index = 0; index < attempts.Length; index++)
+                {
+                    if (responses[index] is { } response)
+                    {
+                        attempts[index].Lane.CommitTurn(attempts[index].Turn, response);
+                    }
+                }
+            }
         }
         finally
         {
@@ -138,6 +156,11 @@ public sealed class TasteTestSession
     public ModelIdentity GetIdentity(TasteTestLane lane)
     {
         ArgumentNullException.ThrowIfNull(lane);
+        if (!_lanes.Contains(lane))
+        {
+            throw new ArgumentException("The selected lane does not belong to this session.", nameof(lane));
+        }
+
         return GetIdentity(lane.Provider);
     }
 
@@ -164,55 +187,72 @@ public sealed class TasteTestSession
         _lanes = CreateLanes();
     }
 
-    private async Task StreamLaneAsync(
+    private async Task<ChatResponse?> StreamLaneAsync(
         TasteTestLane lane,
-        string prompt,
+        TasteTestTurn turn,
         Func<bool, Task> notifyProgress,
         CancellationToken cancellationToken)
     {
-        var turn = lane.BeginTurn(prompt);
         var updates = new List<ChatResponseUpdate>();
-        var client = _clients.GetClient(lane.Provider);
-
-        lane.IsStreaming = true;
-        await notifyProgress(true);
+        var startedAt = Stopwatch.GetTimestamp();
 
         try
         {
+            await notifyProgress(true);
+            cancellationToken.ThrowIfCancellationRequested();
+            var client = _clients.GetClient(lane.Provider);
             var chatOptions = new ChatOptions
             {
                 Instructions = _options.SystemPrompt,
                 MaxOutputTokens = _options.MaxOutputTokens
             };
 
+            // Neither the SDK nor a failed call can append an incomplete user turn to history.
+            var messages = new List<ChatMessage>(lane.History)
+            {
+                new(ChatRole.User, turn.Prompt)
+            };
+
             await foreach (var update in client
-                .GetStreamingResponseAsync(lane.History, chatOptions, cancellationToken)
+                .GetStreamingResponseAsync(messages, chatOptions, cancellationToken)
                 .ConfigureAwait(false))
             {
                 updates.Add(update);
+
+                if (turn.TimeToFirstToken is null && !string.IsNullOrEmpty(update.Text))
+                {
+                    turn.TimeToFirstToken = Stopwatch.GetElapsedTime(startedAt);
+                }
+
                 turn.AppendResponse(update.Text);
                 await notifyProgress(false);
             }
 
+            // ToChatResponse folds provider-specific usage content into one UsageDetails, so the
+            // OpenAI Responses and Anthropic Messages token counts arrive in the same shape.
             var response = updates.ToChatResponse();
             turn.Usage = response.Usage;
-            lane.ConversationId = response.ConversationId;
 
-            // Prefer the provider's own assistant messages so tool calls and multi-part content
-            // survive into the next turn; fall back to the streamed text when none were returned.
-            if (response.Messages.Count > 0)
+            if (string.IsNullOrWhiteSpace(response.Text))
             {
-                lane.History.AddMessages(response);
+                turn.Error = "No visible answer was returned. Try again or increase the output token limit.";
+                TasteTestLog.EmptyResponse(_logger, lane.Label, lane.Provider);
+                return null;
             }
-            else
-            {
-                lane.History.Add(new ChatMessage(ChatRole.Assistant, turn.Response));
-            }
+
+            turn.IsStreaming = false;
+            return response;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            lane.Error = "Response canceled.";
-            throw;
+            turn.Error = "Response canceled. This attempt was not added to conversation history.";
+            return null;
+        }
+        catch (OperationCanceledException exception)
+        {
+            turn.Error = "This lane timed out. Please try again.";
+            TasteTestLog.LaneFailed(_logger, exception, lane.Label, lane.Provider);
+            return null;
         }
         catch (Exception exception) when (exception is
             AuthenticationFailedException or
@@ -223,13 +263,20 @@ public sealed class TasteTestSession
         {
             // Keep the other lane usable, and never surface provider detail to the browser because
             // that would leak the hidden identity before the reveal.
-            lane.Error =
+            turn.Error =
                 "This lane could not complete. Check model availability, quota, RBAC, and the server logs.";
             TasteTestLog.LaneFailed(_logger, exception, lane.Label, lane.Provider);
+            return null;
         }
         finally
         {
-            lane.IsStreaming = false;
+            if (turn.IsStreaming && turn.Error is null)
+            {
+                turn.Error = "This lane stopped unexpectedly. Check the server logs before retrying.";
+            }
+
+            turn.Duration = Stopwatch.GetElapsedTime(startedAt);
+            turn.IsStreaming = false;
             await notifyProgress(true);
         }
     }

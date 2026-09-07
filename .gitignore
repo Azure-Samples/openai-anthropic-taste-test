@@ -24,3 +24,6 @@ Thumbs.db
 *.log
 TestResults/
 coverage/
+
+# Local-only working material (demo scripts, scratch notes) — never published
+demo-local/

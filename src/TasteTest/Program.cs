@@ -27,7 +27,8 @@ builder.Services.AddHttpClient(ModelClientNames.Anthropic)
 
 // Entra only. Locally this resolves a developer credential; in Container Apps it resolves the
 // user-assigned managed identity through AZURE_CLIENT_ID.
-builder.Services.AddSingleton<TokenCredential>(static _ => new DefaultAzureCredential());
+builder.Services.AddSingleton<TokenCredential>(_ => new DefaultAzureCredential(
+    new DefaultAzureCredentialOptions { TenantId = builder.Configuration["AZURE_TENANT_ID"] }));
 
 if (tasteTestOptions.UseSampleResponses)
 {

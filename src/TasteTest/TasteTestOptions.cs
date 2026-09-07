@@ -1,4 +1,3 @@
-using System.Globalization;
 using Microsoft.Extensions.Options;
 
 namespace TasteTest;
@@ -64,19 +63,10 @@ public sealed class TasteTestOptions
         options.ClaudeDeploymentName =
             configuration["CLAUDE_DEPLOYMENT_NAME"] ?? options.ClaudeDeploymentName;
 
-        if (bool.TryParse(configuration["TASTE_TEST_USE_SAMPLE_RESPONSES"], out var useSamples))
-        {
-            options.UseSampleResponses = useSamples;
-        }
-
-        if (int.TryParse(
-                configuration["TASTE_TEST_MAX_OUTPUT_TOKENS"],
-                NumberStyles.Integer,
-                CultureInfo.InvariantCulture,
-                out var maxOutputTokens))
-        {
-            options.MaxOutputTokens = maxOutputTokens;
-        }
+        options.UseSampleResponses =
+            configuration.GetValue<bool?>("TASTE_TEST_USE_SAMPLE_RESPONSES") ?? options.UseSampleResponses;
+        options.MaxOutputTokens =
+            configuration.GetValue<int?>("TASTE_TEST_MAX_OUTPUT_TOKENS") ?? options.MaxOutputTokens;
 
         options.FoundryEndpoint = options.FoundryEndpoint.Trim().TrimEnd('/');
 

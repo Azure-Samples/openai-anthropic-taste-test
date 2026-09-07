@@ -15,4 +15,16 @@ internal static partial class TasteTestLog
         Exception exception,
         string lane,
         ProviderKind provider);
+
+    [LoggerMessage(
+        EventId = 1001,
+        Level = LogLevel.Warning,
+        Message = "Taste-test lane {Lane} returned no visible answer for provider {Provider}.")]
+    public static partial void EmptyResponse(ILogger logger, string lane, ProviderKind provider);
+
+    [LoggerMessage(
+        EventId = 1002,
+        Level = LogLevel.Error,
+        Message = "The taste-test request could not be completed.")]
+    public static partial void RequestFailed(ILogger logger, Exception exception);
 }

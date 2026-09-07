@@ -60,6 +60,19 @@ public sealed class SampleModelChatClientFactory : IModelChatClientFactory, IDis
                 await Task.Delay(22, cancellationToken);
                 yield return new ChatResponseUpdate(ChatRole.Assistant, chunk);
             }
+
+            // Preview mode still emits usage so the metrics strip renders exactly as it does live.
+            var inputTokens = messages.Sum(message => EstimateTokens(message.Text));
+            yield return new ChatResponseUpdate
+            {
+                Role = ChatRole.Assistant,
+                Contents = [new UsageContent(new UsageDetails
+                {
+                    InputTokenCount = inputTokens,
+                    OutputTokenCount = EstimateTokens(response),
+                    TotalTokenCount = inputTokens + EstimateTokens(response)
+                })]
+            };
         }
 
         public object? GetService(Type serviceType, object? serviceKey = null) =>
@@ -76,5 +89,8 @@ public sealed class SampleModelChatClientFactory : IModelChatClientFactory, IDis
                 yield return text.Substring(index, Math.Min(size, text.Length - index));
             }
         }
+
+        private static long EstimateTokens(string? text) =>
+            string.IsNullOrEmpty(text) ? 0 : Math.Max(1, text.Length / 4);
     }
 }

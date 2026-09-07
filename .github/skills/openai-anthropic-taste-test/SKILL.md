@@ -137,9 +137,9 @@ azd provision --preview --no-prompt
 azd provision --no-prompt
 ```
 
-The application uses `DefaultAzureCredential`, not the azd credential cache. Before starting it,
-ensure a supported developer credential is signed into the same tenant. Prefer browser-based Azure
-CLI login when needed:
+The application uses `DefaultAzureCredential`, whose developer chain includes Azure Developer CLI,
+Azure CLI, and supported IDE credentials. Reuse a cached credential for the target tenant rather than
+prompting for another login. Only if no usable credential exists, use browser-based Azure CLI login:
 
 ```powershell
 az login --tenant <tenant-id>
@@ -153,7 +153,7 @@ az login --tenant <tenant-id>
 ./scripts/run-local.sh
 ```
 
-Verify `http://localhost:5000/health` or the URL printed by `dotnet run`, then complete the browser
+Verify `http://localhost:5050/health` or the URL printed by `dotnet run`, then complete the browser
 verification below.
 
 ## VERIFY — prove the experience
@@ -169,6 +169,8 @@ verification below.
 7. Submit a follow-up and confirm only the winning model responds.
 8. Select **New taste test** and confirm both identities disappear from the DOM and lane ordering is
    randomized again.
+9. Cancel a streamed comparison and retry. The partial answers remain labeled as incomplete, but
+   neither lane includes that attempt in the next request's history.
 
 For a direct Claude smoke test, use the provisioned endpoint and deployment from
 `azd env get-values`. Acquire an Entra token for `https://ai.azure.com/.default`, POST a minimal
@@ -180,7 +182,7 @@ text response. Never print the token.
 | Error | Meaning | Action |
 |---|---|---|
 | `roleAssignments/write` authorization failure | Contributor can provision resources but cannot grant managed-identity access | Switch to local hosting, or request `Role Based Access Control Administrator` |
-| `no valid payment method` / plan cannot be purchased with a free subscription | The production Marketplace plan is not eligible on that subscription | Use an eligible subscription. Internal test subscriptions may instead expose an already accepted `*-test-plan`. |
+| `no valid payment method` / plan cannot be purchased with a free subscription | The Marketplace plan is not eligible on that subscription | Use an eligible subscription. Some subscriptions are provisioned with a different pre-accepted plan, so confirm the available plans with the subscription administrator. |
 | `AnthropicOrganizationCreationException` | Attestation fields are missing or invalid | Set the legal entity, two-letter country, and lowercase industry |
 | `InsufficientQuota` | Model capacity is unavailable in the selected region | Lower capacity, select another supported region, or request quota |
 | Local app returns 401/403 | `DefaultAzureCredential` resolved a different tenant/account or the user lacks data access | Sign Azure CLI into the target tenant and verify `Azure AI Developer`, `Foundry Owner`, or `Cognitive Services User` |

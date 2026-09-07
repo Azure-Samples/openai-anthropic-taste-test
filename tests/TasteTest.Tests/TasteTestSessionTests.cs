@@ -30,6 +30,45 @@ public sealed class TasteTestSessionTests
     }
 
     [Fact]
+    public async Task SendAsync_RecordsFirstTokenLatencyAndDurationForEachLane()
+    {
+        using var factory = new TrackingClientFactory();
+        var session = CreateSession(factory);
+
+        await session.SendAsync("Compare these answers.", _ => Task.CompletedTask);
+
+        Assert.All(session.Lanes, lane =>
+        {
+            var turn = Assert.Single(lane.Turns);
+            var firstToken = Assert.NotNull(turn.TimeToFirstToken);
+            var duration = Assert.NotNull(turn.Duration);
+            Assert.True(firstToken >= TimeSpan.Zero);
+
+            // First-token latency is a prefix of the whole stream, so it can never exceed it.
+            Assert.True(
+                duration >= firstToken,
+                $"Duration {duration} must be at least the first-token latency {firstToken}.");
+        });
+    }
+
+    [Fact]
+    public async Task SendAsync_LeavesFirstTokenLatencyUnsetWhenALaneFailsBeforeStreaming()
+    {
+        using var factory = new TrackingClientFactory();
+        factory.Anthropic.FailWith(new HttpRequestException("transport failure"));
+        var session = CreateSession(factory);
+
+        await session.SendAsync("Compare these answers.", _ => Task.CompletedTask);
+
+        var failed = Assert.Single(session.Lanes, lane => lane.HasError);
+        var turn = Assert.Single(failed.Turns);
+        Assert.Null(turn.TimeToFirstToken);
+
+        // Duration is still recorded so a failed attempt can be timed.
+        Assert.NotNull(turn.Duration);
+    }
+
+    [Fact]
     public async Task PickWinner_RevealsIdentityAndContinuesOnlyWinningHistory()
     {
         using var factory = new TrackingClientFactory();
@@ -136,6 +175,144 @@ public sealed class TasteTestSessionTests
 
         Assert.True(session.CanPick);
         Assert.All(session.Lanes, lane => Assert.False(lane.HasError));
+        Assert.Equal([1, 1], factory.OpenAI.MessageCounts);
+        Assert.Equal([1, 1], factory.Anthropic.MessageCounts);
+        Assert.All(session.Lanes, lane => Assert.False(lane.Turns[0].IncludedInHistory));
+        Assert.All(session.Lanes, lane => Assert.True(lane.Turns[1].IncludedInHistory));
+    }
+
+    [Fact]
+    public async Task SendAsync_PreservesEarlierHistoryButDiscardsTheEntireFailedComparison()
+    {
+        using var factory = new TrackingClientFactory();
+        var session = CreateSession(factory);
+        await session.SendAsync("Completed prompt", _ => Task.CompletedTask);
+
+        factory.Anthropic.FailWith(new HttpRequestException("provider details must stay private"));
+        await session.SendAsync("Failed prompt", _ => Task.CompletedTask);
+        factory.Anthropic.FailWith(null);
+        await session.SendAsync("Retry prompt", _ => Task.CompletedTask);
+
+        Assert.Equal([1, 3, 3], factory.OpenAI.MessageCounts);
+        Assert.Equal([1, 3, 3], factory.Anthropic.MessageCounts);
+        Assert.All(new[] { factory.OpenAI, factory.Anthropic }, client =>
+        {
+            var history = client.Requests[^1];
+            Assert.Equal("Completed prompt", history[0].Text);
+            Assert.Equal(ChatRole.Assistant, history[1].Role);
+            Assert.Equal("Retry prompt", history[2].Text);
+            Assert.DoesNotContain(history, message => message.Text == "Failed prompt");
+            Assert.All(client.ConversationIds, id => Assert.Null(id));
+        });
+    }
+
+    [Fact]
+    public async Task SendAsync_CancellationDiscardsEvenAnAlreadyFinishedLane()
+    {
+        using var factory = new TrackingClientFactory();
+        var session = CreateSession(factory);
+        using var cancellation = new CancellationTokenSource();
+        var streaming = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        factory.Anthropic.AfterText = async token =>
+        {
+            streaming.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+        };
+
+        var pending = session.SendAsync("Canceled prompt", _ => Task.CompletedTask, cancellation.Token);
+        await streaming.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(session.IsBusy);
+        Assert.False(session.CanPick);
+        Assert.Throws<InvalidOperationException>(session.Reset);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            session.SendAsync("Do not overlap", _ => Task.CompletedTask));
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+
+        Assert.False(session.IsBusy);
+        Assert.False(session.CanPick);
+        Assert.All(session.Lanes, lane =>
+        {
+            Assert.False(lane.IsStreaming);
+            Assert.False(lane.Turns[0].IncludedInHistory);
+            Assert.NotEmpty(lane.Turns[0].Response);
+        });
+        Assert.Contains("canceled", session.Lanes[1].Error!, StringComparison.OrdinalIgnoreCase);
+
+        factory.Anthropic.AfterText = null;
+        await session.SendAsync("Retry after cancel", _ => Task.CompletedTask);
+        Assert.True(session.CanPick);
+        Assert.Equal([1, 1], factory.OpenAI.MessageCounts);
+        Assert.Equal([1, 1], factory.Anthropic.MessageCounts);
+    }
+
+    [Fact]
+    public async Task SendAsync_CanceledFollowUpKeepsOnlyTheWinnersCompletedHistory()
+    {
+        using var factory = new TrackingClientFactory();
+        var session = CreateSession(factory);
+        await session.SendAsync("First prompt", _ => Task.CompletedTask);
+        session.PickWinner(session.Lanes[0]);
+        using var cancellation = new CancellationTokenSource();
+        factory.OpenAI.AfterText = token =>
+        {
+            cancellation.Cancel();
+            return Task.FromCanceled(token);
+        };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            session.SendAsync("Canceled follow-up", _ => Task.CompletedTask, cancellation.Token));
+        factory.OpenAI.AfterText = null;
+        await session.SendAsync("Replacement follow-up", _ => Task.CompletedTask);
+
+        Assert.Equal([1, 3, 3], factory.OpenAI.MessageCounts);
+        Assert.Equal(1, factory.Anthropic.CallCount);
+        Assert.DoesNotContain(factory.OpenAI.Requests[^1], message => message.Text == "Canceled follow-up");
+    }
+
+    [Fact]
+    public async Task SendAsync_PreCanceledRequestDoesNotStartOrChangeEitherLane()
+    {
+        using var factory = new TrackingClientFactory();
+        var session = CreateSession(factory);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            session.SendAsync("Already canceled", _ => Task.CompletedTask, cancellation.Token));
+
+        Assert.False(session.IsBusy);
+        Assert.False(session.HasTranscript);
+        Assert.Equal(0, factory.OpenAI.CallCount);
+        Assert.Equal(0, factory.Anthropic.CallCount);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   \n")]
+    public async Task SendAsync_EmptyAnswersCannotWinOrEnterHistory(string answer)
+    {
+        using var factory = new TrackingClientFactory();
+        factory.OpenAI.ResponseText = answer;
+        var session = CreateSession(factory);
+        await session.SendAsync("First prompt", _ => Task.CompletedTask);
+
+        Assert.False(session.CanPick);
+        Assert.Contains("No visible answer", session.Lanes[0].Error!, StringComparison.Ordinal);
+        Assert.All(session.Lanes, lane => Assert.False(lane.LatestTurn!.IncludedInHistory));
+    }
+
+    [Fact]
+    public async Task SendAsync_ProviderTimeoutIsNotReportedAsUserCancellation()
+    {
+        using var factory = new TrackingClientFactory();
+        factory.OpenAI.FailWith(new OperationCanceledException("internal request deadline"));
+        var session = CreateSession(factory);
+        await session.SendAsync("First prompt", _ => Task.CompletedTask);
+
+        Assert.Contains("timed out", session.Lanes[0].Error!, StringComparison.Ordinal);
+        Assert.False(session.CanPick);
+        Assert.False(session.IsBusy);
     }
 
     [Fact]
@@ -236,6 +413,14 @@ public sealed class TasteTestSessionTests
 
         public List<int> MessageCounts { get; } = [];
 
+        public List<ChatMessage[]> Requests { get; } = [];
+
+        public List<string?> ConversationIds { get; } = [];
+
+        public string ResponseText { get; set; } = responseText;
+
+        public Func<CancellationToken, Task>? AfterText { get; set; }
+
         public void FailWith(Exception? failure) => _failure = failure;
 
         public Task<ChatResponse> GetResponseAsync(
@@ -243,7 +428,7 @@ public sealed class TasteTestSessionTests
             ChatOptions? options = null,
             CancellationToken cancellationToken = default) =>
             Task.FromResult(new ChatResponse(
-                new ChatMessage(ChatRole.Assistant, responseText)));
+                new ChatMessage(ChatRole.Assistant, ResponseText)));
 
         public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
             IEnumerable<ChatMessage> messages,
@@ -252,6 +437,9 @@ public sealed class TasteTestSessionTests
         {
             CallCount++;
             MessageCounts.Add(messages.Count());
+            Requests.Add(messages.ToArray());
+            ConversationIds.Add(options?.ConversationId);
+            cancellationToken.ThrowIfCancellationRequested();
 
             if (probe is not null)
             {
@@ -263,10 +451,16 @@ public sealed class TasteTestSessionTests
                 throw _failure;
             }
 
-            yield return new ChatResponseUpdate(ChatRole.Assistant, responseText);
+            yield return new ChatResponseUpdate(ChatRole.Assistant, ResponseText);
+            if (AfterText is not null)
+            {
+                await AfterText(cancellationToken);
+            }
+
             yield return new ChatResponseUpdate
             {
-                Contents = [new UsageContent(new UsageDetails())]
+                Contents = [new UsageContent(new UsageDetails())],
+                ConversationId = "provider-state-not-reused-in-v1"
             };
         }
 

@@ -17,11 +17,13 @@ public sealed class TasteTestLane
 
     public IReadOnlyList<TasteTestTurn> Turns => _turns;
 
-    public bool IsStreaming { get; internal set; }
+    public TasteTestTurn? LatestTurn => _turns.Count > 0 ? _turns[^1] : null;
+
+    public bool IsStreaming => LatestTurn?.IsStreaming ?? false;
 
     public bool HasError => Error is not null;
 
-    public string? Error { get; internal set; }
+    public string? Error => LatestTurn?.Error;
 
     public string? ConversationId { get; internal set; }
 
@@ -33,8 +35,14 @@ public sealed class TasteTestLane
     {
         var turn = new TasteTestTurn(prompt);
         _turns.Add(turn);
-        _history.Add(new ChatMessage(ChatRole.User, prompt));
-        Error = null;
         return turn;
+    }
+
+    internal void CommitTurn(TasteTestTurn turn, ChatResponse response)
+    {
+        _history.Add(new ChatMessage(ChatRole.User, turn.Prompt));
+        _history.AddMessages(response);
+        ConversationId = response.ConversationId;
+        turn.IncludedInHistory = true;
     }
 }

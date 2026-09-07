@@ -189,7 +189,7 @@
     <text font-size="14.5" fill="#5A6B7C">
       <tspan font-weight="700" fill="#0A2540">Swap models without rewriting the app</tspan>
       <tspan dx="10">&#183;</tspan>
-      <tspan dx="10" font-weight="700" fill="#0A2540">No API keys</tspan>, managed identity only
+      <tspan dx="10" font-weight="700" fill="#0A2540">Entra ID</tspan> locally &#183; managed identity in Azure
       <tspan dx="10">&#183;</tspan>
       <tspan dx="10" font-weight="700" fill="#0A2540">One</tspan><tspan font-family="'Cascadia Code', Consolas, monospace" fill="#0A2540"> azd up</tspan>
     </text>
