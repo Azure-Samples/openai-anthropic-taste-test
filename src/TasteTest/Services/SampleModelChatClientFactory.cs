@@ -66,6 +66,7 @@ public sealed class SampleModelChatClientFactory : IModelChatClientFactory, IDis
             yield return new ChatResponseUpdate
             {
                 Role = ChatRole.Assistant,
+                FinishReason = ChatFinishReason.Stop,
                 Contents = [new UsageContent(new UsageDetails
                 {
                     InputTokenCount = inputTokens,

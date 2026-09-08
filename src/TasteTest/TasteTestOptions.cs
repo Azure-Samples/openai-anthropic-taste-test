@@ -29,7 +29,10 @@ public sealed class TasteTestOptions
 
     public string ClaudeDeploymentName { get; set; } = "claude-opus-5";
 
-    public int MaxOutputTokens { get; set; } = 900;
+    // Reasoning tokens share this budget with visible output on the default models.
+    public int MaxOutputTokens { get; set; } = 4_096;
+
+    public int RequestTimeoutSeconds { get; set; } = 120;
 
     public int MaxPromptCharacters { get; set; } = 4_000;
 
@@ -37,7 +40,9 @@ public sealed class TasteTestOptions
     public bool UseSampleResponses { get; set; }
 
     public string SystemPrompt { get; set; } =
-        "Answer directly and thoughtfully. Prefer a clear structure, concrete examples, and no discussion of your identity or provider.";
+        "Answer directly and thoughtfully. Prefer a clear structure and concrete examples. " +
+        "Keep answers under 180 words unless the user asks for more detail. " +
+        "Do not discuss your identity or provider.";
 
     public IReadOnlyList<string> SeedPrompts { get; set; } =
     [
@@ -88,6 +93,11 @@ public sealed class TasteTestOptions
         {
             errors.Add(
                 $"{SectionName}:{nameof(MaxOutputTokens)} must be between {MinimumOutputTokens} and {MaximumOutputTokens}.");
+        }
+
+        if (RequestTimeoutSeconds is < 1 or > 600)
+        {
+            errors.Add($"{SectionName}:{nameof(RequestTimeoutSeconds)} must be between 1 and 600.");
         }
 
         if (MaxPromptCharacters is < MinimumPromptCharacters or > MaximumPromptCharacters)

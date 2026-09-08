@@ -143,7 +143,7 @@ prompting for another login. Only if no usable credential exists, use browser-ba
 
 ```powershell
 az login --tenant <tenant-id>
-./scripts/run-local.ps1
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\scripts\run-local.ps1
 ```
 
 On macOS or Linux:
@@ -162,7 +162,7 @@ verification below.
    `OpenAI`, `Anthropic`, `gpt-`, `claude-`, `Responses API`, or `Messages API`.
 2. Select one of the seed prompts.
 3. Submit it and confirm both lane A and lane B stream concurrently.
-4. Confirm the vote buttons appear only after both lanes finish successfully.
+4. Confirm the vote buttons enable only after both lanes finish successfully. While waiting or after failure, they stay disabled with an explanation.
 5. Pick either lane.
 6. Confirm both identities appear, the selected lane is marked `WINNER`, and only that response
    pane remains.
@@ -171,6 +171,10 @@ verification below.
    randomized again.
 9. Cancel a streamed comparison and retry. The partial answers remain labeled as incomplete, but
    neither lane includes that attempt in the next request's history.
+10. Confirm the submit button disables promptly, Cancel remains responsive before the first text,
+    and a double click does not queue a second comparison or leave a stale error.
+11. For live verification, require no preview banner, completed answers from both native SDKs,
+    and an enabled vote. Canned preview responses are not evidence of working inference.
 
 For a direct Claude smoke test, use the provisioned endpoint and deployment from
 `azd env get-values`. Acquire an Entra token for `https://ai.azure.com/.default`, POST a minimal
@@ -188,6 +192,8 @@ text response. Never print the token.
 | Local app returns 401/403 | `DefaultAzureCredential` resolved a different tenant/account or the user lacks data access | Sign Azure CLI into the target tenant and verify `Azure AI Developer`, `Foundry Owner`, or `Cognitive Services User` |
 | Azure-hosted app returns 401/403 | Managed-identity role assignment has not propagated | Verify `Cognitive Services User` on the Foundry account and retry after propagation |
 | One lane fails while the other succeeds | Provider-specific quota, deployment, auth, or endpoint problem | Check server logs; the browser intentionally hides provider details before reveal |
+| Empty answer or token-limit message | Reasoning can consume the output budget before visible text | Use the 4096-token default, restart the local app after settings change, then Retry comparison. Check terminal finish reason and usage in server logs. |
+| PowerShell reports scripts are disabled | The launcher was blocked before the app started | Use the process-scoped Windows launcher above. Do not override organization-enforced policies. |
 
 ## MODIFY
 

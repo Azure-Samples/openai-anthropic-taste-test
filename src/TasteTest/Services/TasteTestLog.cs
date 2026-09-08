@@ -1,3 +1,5 @@
+using Microsoft.Extensions.AI;
+
 namespace TasteTest.Services;
 
 /// <summary>
@@ -27,4 +29,15 @@ internal static partial class TasteTestLog
         Level = LogLevel.Error,
         Message = "The taste-test request could not be completed.")]
     public static partial void RequestFailed(ILogger logger, Exception exception);
+
+    [LoggerMessage(
+        EventId = 1003,
+        Level = LogLevel.Information,
+        Message = "Lane {Lane} ({Provider}) finished: {FinishReason}; output tokens {OutputTokens}, reasoning tokens {ReasoningTokens}, visible characters {VisibleCharacters}.")]
+    public static partial void StreamFinished(
+        ILogger logger, string lane, ProviderKind provider, ChatFinishReason? finishReason,
+        long? outputTokens, long? reasoningTokens, int visibleCharacters);
+
+    [LoggerMessage(EventId = 1004, Level = LogLevel.Debug, Message = "Ignored a duplicate submit while a request was active.")]
+    public static partial void DuplicateSubmit(ILogger logger);
 }

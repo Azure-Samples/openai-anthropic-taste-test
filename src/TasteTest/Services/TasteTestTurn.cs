@@ -44,6 +44,10 @@ public sealed class TasteTestTurn
 
     public UsageDetails? Usage { get; internal set; }
 
+    public ChatFinishReason? FinishReason { get; internal set; }
+
+    public bool IsComplete { get; internal set; }
+
     /// <summary>
     /// Time from request start to the first streamed token. Measured identically for both lanes so
     /// the OpenAI Responses stream and the Anthropic Messages stream stay directly comparable.

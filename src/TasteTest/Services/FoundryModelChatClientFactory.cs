@@ -27,11 +27,13 @@ public sealed class FoundryModelChatClientFactory : IModelChatClientFactory, IDi
                 httpClientFactory.CreateClient(ModelClientNames.OpenAI))
         };
 
-        _openAI = new OpenAIClient(
+        var openAIClient = new OpenAIClient(
                 new BearerTokenPolicy(credential, "https://ai.azure.com/.default"),
                 openAIOptions)
             .GetResponsesClient()
-            .AsIChatClient(_options.AoaiDeploymentName)
+            .AsIChatClient(_options.AoaiDeploymentName);
+
+        _openAI = new OpenAIStreamCompletionClient(openAIClient)
             .AsBuilder()
             .UseFunctionInvocation()
             .Build();

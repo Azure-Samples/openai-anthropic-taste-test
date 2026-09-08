@@ -16,7 +16,7 @@ Underneath, it is one .NET interface — `IChatClient` — talking to two differ
 2. **Stay blind.** The answers appear in two lanes named **A** and **B**. Nothing on the page says which model is which.
 3. **Vote, then reveal.** Pick the answer you like. Only then does the app show the provider, model, SDK, and protocol behind each lane.
 
-Each answer also shows real numbers: time to first token, total time, and token counts — read from both providers through the same .NET types.
+Live answers show time to first visible text, total time, and API-reported token counts through the same .NET types. Output token counts can include reasoning, not just the words on screen. Preview token counts are estimates.
 
 ![Two blind response lanes showing the same prompt, different answers, and per-answer latency and token metrics](docs/img/taste-test.png)
 
@@ -71,7 +71,7 @@ You don't have to wait. Local mode creates only the Foundry account and the two 
 azd env set HOSTING_MODE local
 azd env set ASSIGN_INFERENCE_ROLE_TO_DEPLOYER false
 azd provision
-./scripts/run-local.ps1
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\scripts\run-local.ps1
 ```
 
 Use `azd provision`, not `azd up`, because this mode deliberately deploys no Azure hosting. Your account still needs data access to Foundry, which `Azure AI Developer`, `Foundry Owner`, or `Cognitive Services User` provides.
@@ -162,7 +162,7 @@ var responses = await Task.WhenAll(lanes.Select(async lane =>
 
     await foreach (var update in lane.Client.GetStreamingResponseAsync(
         messages,
-        new ChatOptions { MaxOutputTokens = 900 },
+        new ChatOptions { MaxOutputTokens = 4096 },
         cancellationToken))
     {
         updates.Add(update);
@@ -176,6 +176,8 @@ var responses = await Task.WhenAll(lanes.Select(async lane =>
 
 `ToChatResponse()` also folds each provider's usage reporting into one `UsageDetails`, which is why the page can show token counts for both lanes without any provider-specific code.
 
+The OpenAI construction includes a small [completion adapter](src/TasteTest/Services/OpenAIStreamCompletionClient.cs): MEAI.OpenAI 10.9.0 forwards `response.incomplete` without its finish reason or usage. The adapter uses the SDK's native response conversion to preserve both, without duplicating streamed text. The shared application loop stays provider-neutral.
+
 Swapping either lane for a different model is a configuration change, not a rewrite.
 
 <details>
@@ -186,7 +188,8 @@ Being precise so nothing here is oversold:
 - `UseFunctionInvocation()` installs MEAI's tool-calling middleware, but this sample registers **no tools**, so no tool call is executed.
 - It does not request structured output.
 - It does not reuse provider-side conversation IDs. Every turn replays the full completed history to both lanes.
-- Canceled, failed, and empty answers cannot win a vote. They stay visible with a notice but are excluded from future context, so a retry can never poison one lane's history.
+- Canceled, failed, truncated, and empty answers cannot win a vote. Voting stays disabled with an explanation until both answers complete. **Retry comparison** resends the last prompt to both lanes. Earlier attempts remain visible but are excluded from future context.
+- Each lane has a 120-second deadline. Cancel stops both lanes; neither an abandoned comparison nor a failed follow-up changes completed conversation history.
 
 </details>
 
@@ -207,7 +210,7 @@ Being precise so nothing here is oversold:
 After `azd provision`, run the app on your machine against the real Foundry endpoint:
 
 ```powershell
-./scripts/run-local.ps1
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\scripts\run-local.ps1
 ```
 
 ```bash
@@ -215,6 +218,10 @@ After `azd provision`, run the app on your machine against the real Foundry endp
 ```
 
 Both open **http://localhost:5050**, load your active `azd` environment, turn off canned answers, and sign in with the Azure credential you already have. A separate `az login` is not required if you have a usable cached credential.
+
+The Windows command allows local scripts for that process only; it does not permanently change your execution policy. Organization-enforced policies still apply.
+
+Before a demo, run a real comparison, vote, and ask a follow-up. The no-Azure preview does **not** verify model access or live inference.
 
 <details>
 <summary><b>Use different models</b></summary>
@@ -229,7 +236,15 @@ Defaults, current as of September 2, 2026:
 | `AOAI_MODEL_NAME` | `gpt-5.6-sol` |
 | `AOAI_MODEL_VERSION` | `2026-07-09` |
 | `AOAI_MODEL_CAPACITY` | `10` |
-| `TASTE_TEST_MAX_OUTPUT_TOKENS` | `900` |
+| `TASTE_TEST_MAX_OUTPUT_TOKENS` | `4096` |
+
+This budget covers reasoning as well as visible answers. The old 900-token budget could be exhausted before any text appeared. If an existing environment still sets that value, update it and restart the local app:
+
+```powershell
+azd env set TASTE_TEST_MAX_OUTPUT_TOKENS 4096
+```
+
+For Azure hosting, preview and provision again to update the app setting.
 
 A faster, cheaper pair for rehearsals:
 
@@ -268,7 +283,7 @@ azd provision
 - The Container App uses a user-assigned managed identity with `Cognitive Services User`.
 - That same identity gets only `AcrPull` on the container registry.
 - Prompts stay in server-side Blazor circuit state and go straight to the model endpoints.
-- Model output is rendered as encoded text. Raw HTML is never trusted.
+- Markdown headings, lists, emphasis, and code are rendered safely. Raw HTML is escaped, and model-generated links and images are inert text.
 
 </details>
 
@@ -290,7 +305,13 @@ If your package mirror lags, use NuGet.org or ask the mirror owner to sync those
 
 **One lane returns 403.** Role assignments can take a few minutes to propagate after the first deploy. Confirm the app identity has `Cognitive Services User` on the Foundry account, then restart the Container App revision.
 
-**Provisioning fails with `Authorization failed ... roleAssignments/write`.** You can create resources but not role assignments. Either ask for `Role Based Access Control Administrator` at subscription scope, or use local mode: `azd env set HOSTING_MODE local`, `azd env set ASSIGN_INFERENCE_ROLE_TO_DEPLOYER false`, then `azd provision` and `./scripts/run-local.ps1`. See the "If you can't create role assignments" section above for details.
+**Blank or cut-off answer; voting disabled.** Check the lane's message. A reasoning model can consume its output budget without producing text. Use the 4096-token default, restart the app after changing settings, and retry. Both lanes must finish before voting; the successful answer isn't itself incomplete when the other lane fails.
+
+**A request seems stuck.** The button changes to **Generating...**, a status message explains the wait, and **Cancel** remains available. A lane that exceeds 120 seconds fails with a retry message instead of waiting indefinitely.
+
+**PowerShell says scripts are disabled.** Use the process-scoped Windows command in "Run against your deployed models." If an organizational policy still blocks execution, ask your administrator for the approved approach.
+
+**Provisioning fails with `Authorization failed ... roleAssignments/write`.** You can create resources but not role assignments. Either ask for `Role Based Access Control Administrator` at subscription scope, or use local mode: `azd env set HOSTING_MODE local`, `azd env set ASSIGN_INFERENCE_ROLE_TO_DEPLOYER false`, then `azd provision` and the Windows launcher above.
 
 **Claude deployment fails with `no valid payment method`.** Marketplace rejected the subscription for that offer. Confirm eligibility with your subscription administrator. Pointing `CLAUDE_MODEL_NAME` at an OpenAI model does not work around this — that lane always deploys an Anthropic model.
 
@@ -305,7 +326,7 @@ dotnet test OpenAIAnthropicTasteTest.slnx
 azd provision --preview
 ```
 
-The tests cover concurrent dual-lane streaming, usage and latency capture, the guarded reveal, winner-only continuation, cancellation and retry isolation, empty-answer handling, and real SDK request serialization. The transport tests confirm both native routes and Entra authorization without calling Azure.
+The tests cover concurrent streaming, blocking SDK startup, usage and latency, guarded voting, winner-only continuation, cancellation, timeouts, retry isolation, truncated/empty streams, and safe Markdown. Transport tests exercise the actual SDKs with native JSON and server-sent events, without calling Azure.
 
 ## Learn more
 

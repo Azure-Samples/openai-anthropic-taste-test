@@ -1,0 +1,21 @@
+<div class="turn-response @(IsStreaming ? "turn-response-streaming" : null)">@_html</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public string Text { get; set; } = string.Empty;
+
+    [Parameter]
+    public bool IsStreaming { get; set; }
+
+    private string? _previousText;
+    private MarkupString _html;
+
+    protected override void OnParametersSet()
+    {
+        if (!string.Equals(_previousText, Text, StringComparison.Ordinal))
+        {
+            _html = new MarkupString(ResponseMarkdown.ToHtml(Text));
+            _previousText = Text;
+        }
+    }
+}

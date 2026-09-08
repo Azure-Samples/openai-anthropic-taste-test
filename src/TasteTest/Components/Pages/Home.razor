@@ -22,7 +22,7 @@
     @if (Session.UseSampleResponses)
     {
         <div class="sample-notice" role="status">
-            UI preview: canned example answers, not live model responses.
+            UI preview: canned answers and estimated token counts, not live model measurements.
         </div>
     }
 
@@ -31,7 +31,7 @@
         {
             <div class="form-error" role="alert">@ErrorMessage</div>
         }
-        <form class="composer" @onsubmit="SubmitAsync" @onsubmit:preventDefault>
+        <form class="composer" aria-busy="@(IsSubmitting ? "true" : "false")" @onsubmit="SubmitAsync" @onsubmit:preventDefault>
             <label for="taste-prompt">
                 @(Session.Revealed ? "Continue with your winner" : "Ask both models the same question")
             </label>
@@ -40,23 +40,35 @@
                       @bind:event="oninput"
                       maxlength="@Session.MaxPromptCharacters"
                       rows="2"
-                      disabled="@Session.IsBusy"
+                      disabled="@IsSubmitting"
                       placeholder="Ask for an explanation, a judgment call, or a rewrite..."></textarea>
             <div class="composer-actions">
                 <span>@Prompt.Length / @Session.MaxPromptCharacters</span>
-                @if (Session.IsBusy)
+                @if (IsSubmitting)
                 {
-                    <button type="button" class="button-secondary" @onclick="Cancel">Cancel</button>
+                    <button type="button" class="button-secondary" disabled="@_cancelRequested" @onclick="Cancel">
+                        @(_cancelRequested ? "Canceling..." : "Cancel")
+                    </button>
                 }
                 @if (Session.HasTranscript)
                 {
-                    <button type="button" class="button-secondary" disabled="@Session.IsBusy" @onclick="NewTasteTest">New taste test</button>
+                    <button type="button" class="button-secondary" disabled="@IsSubmitting" @onclick="NewTasteTest">New taste test</button>
                 }
-                <button type="submit" class="button-primary" disabled="@(Session.IsBusy || string.IsNullOrWhiteSpace(Prompt))">
-                    @(Session.IsBusy ? "Generating..." : Session.Revealed ? "Ask winner" : "Compare answers")
+                <button type="submit" class="button-primary" disabled="@(IsSubmitting || string.IsNullOrWhiteSpace(Prompt))">
+                    @(IsSubmitting ? "Generating..." : Session.Revealed ? "Ask winner" : "Compare answers")
                 </button>
             </div>
         </form>
+        @if (IsSubmitting)
+        {
+            <p class="request-status" role="status">
+                @(_cancelRequested
+                    ? "Canceling this request. Completed conversation history will be kept."
+                    : Session.Revealed
+                        ? "Your winner is answering. You can cancel at any time."
+                        : "Request sent to both lanes. Models may think before text appears. You can cancel at any time.")
+            </p>
+        }
     </section>
 
     @if (!Session.HasTranscript)
@@ -68,7 +80,7 @@
             <div class="seed-grid">
                 @foreach (var seed in Session.SeedPrompts)
                 {
-                    <button type="button" class="seed-card" @onclick="() => SelectPrompt(seed)">
+                    <button type="button" class="seed-card" disabled="@IsSubmitting" @onclick="() => SelectPrompt(seed)">
                         @seed
                     </button>
                 }
@@ -140,14 +152,18 @@
                             <span></span>
                             <text>Generating</text>
                         }
-                        else if (lane.LatestTurn is { IncludedInHistory: true })
+                        else if (lane.LatestTurn is { IsComplete: true })
                         {
                             <text>Answer ready</text>
+                        }
+                        else if (lane.HasError)
+                        {
+                            <text>Needs retry</text>
                         }
                     </span>
                 </header>
 
-                <div class="lane-transcript" aria-live="polite" aria-busy="@lane.IsStreaming" tabindex="0" aria-label="@($"Lane {lane.Label} conversation")">
+                <div class="lane-transcript" aria-live="polite" aria-busy="@(lane.IsStreaming ? "true" : "false")" tabindex="0" aria-label="@($"Lane {lane.Label} conversation")">
                     @if (lane.Turns.Count == 0)
                     {
                         <div class="empty-lane">
@@ -171,12 +187,15 @@
                             }
                             else
                             {
-                                <div class="turn-response @(turn.IsStreaming ? "turn-response-streaming" : null)">@turn.Response</div>
+                                <ModelAnswer Text="@turn.Response" IsStreaming="@turn.IsStreaming" />
                             }
-                            @if (turn.TimeToFirstToken is { } firstToken)
+                            @if (turn.Duration is not null || turn.TimeToFirstToken is not null)
                             {
                                 <div class="turn-metrics" aria-label="@($"Lane {lane.Label} response metrics")">
-                                    <span><b>@Format(firstToken)</b> to first token</span>
+                                    @if (turn.TimeToFirstToken is { } firstToken)
+                                    {
+                                        <span><b>@Format(firstToken)</b> to first text</span>
+                                    }
                                     @if (!turn.IsStreaming && turn.Duration is { } duration)
                                     {
                                         <span><b>@Format(duration)</b> total</span>
@@ -189,15 +208,23 @@
                                     {
                                         <span><b>@input.ToString("N0")</b> input</span>
                                     }
+                                    @if (Session.UseSampleResponses)
+                                    {
+                                        <span>Estimated preview usage</span>
+                                    }
                                 </div>
                             }
                             @if (turn.Error is not null)
                             {
                                 <div class="lane-error" role="alert">@turn.Error</div>
                             }
-                            @if (!Session.IsBusy && !turn.IncludedInHistory)
+                            @if (!IsSubmitting && !turn.IncludedInHistory)
                             {
-                                <p class="turn-notice">Incomplete attempt — not used as context for your next question.</p>
+                                <p class="turn-notice">
+                                    @(turn.IsComplete
+                                        ? "Answer complete. Not added to history because the comparison did not finish successfully."
+                                        : "Unfinished answer. Not used as context for your next question.")
+                                </p>
                             }
                         </div>
                     }
@@ -206,20 +233,36 @@
         }
     </section>
 
-    @if (Session.CanPick)
+    @if (Session.HasTranscript && !Session.Revealed)
     {
         <section class="vote-panel" aria-labelledby="vote-heading">
             <div>
                 <p class="eyebrow">TRUST YOUR TASTE</p>
-                <h2 id="vote-heading">Which answer would you ship?</h2>
+                <h2 id="vote-heading">@(Session.CanPick ? "Which answer would you ship?" : IsSubmitting ? "Waiting for both answers" : "This comparison needs a retry")</h2>
+                @if (!Session.CanPick && !IsSubmitting)
+                {
+                    <p>Voting needs two completed answers. Retry the same prompt in both lanes, or edit it above.</p>
+                }
             </div>
             <div class="vote-actions">
                 @foreach (var lane in Session.Lanes)
                 {
-                    <button type="button" class="vote-button" @onclick="() => Pick(lane)">Pick @lane.Label</button>
+                    <button type="button" class="vote-button" disabled="@(!Session.CanPick || IsSubmitting)" @onclick="() => Pick(lane)">Pick @lane.Label</button>
+                }
+                @if (Session.CanRetry && !IsSubmitting)
+                {
+                    <button type="button" class="button-primary" @onclick="RetryAsync">Retry comparison</button>
                 }
             </div>
         </section>
+    }
+
+    @if (Session.Revealed && Session.CanRetry && !IsSubmitting)
+    {
+        <div class="retry-panel" role="status">
+            <span>Your previous conversation is safe. This answer did not finish.</span>
+            <button type="button" class="button-primary" @onclick="RetryAsync">Retry answer</button>
+        </div>
     }
 
     @if (Session.Revealed)
@@ -238,6 +281,8 @@
     private CancellationTokenSource? _requestCancellation;
     private long _lastRenderTimestamp;
     private bool _disposed;
+    private bool _cancelRequested;
+    private bool IsSubmitting => _requestCancellation is not null || Session.IsBusy;
     private string Prompt { get; set; } = string.Empty;
     private string? ErrorMessage { get; set; }
 
@@ -249,9 +294,9 @@
 
     private async Task SubmitAsync()
     {
-        if (Session.IsBusy)
+        if (IsSubmitting)
         {
-            ErrorMessage = "A response is already in progress. Wait or cancel it before sending another.";
+            TasteTestLog.DuplicateSubmit(Logger);
             return;
         }
 
@@ -259,10 +304,14 @@
         ErrorMessage = null;
         using var cancellation = new CancellationTokenSource();
         _requestCancellation = cancellation;
+        _cancelRequested = false;
 
         try
         {
             Prompt = string.Empty;
+            // Paint the busy state before any SDK or credential initialization can run.
+            StateHasChanged();
+            await Task.Yield();
             await Session.SendAsync(submittedPrompt, RequestRenderAsync, cancellation.Token);
             if (Session.VisibleLanes.Any(lane => lane.HasError))
             {
@@ -283,6 +332,7 @@
         finally
         {
             _requestCancellation = null;
+            _cancelRequested = false;
             await RequestRenderAsync(true);
         }
     }
@@ -324,6 +374,24 @@
         ErrorMessage = null;
     }
 
+    private Task RetryAsync()
+    {
+        if (IsSubmitting)
+        {
+            TasteTestLog.DuplicateSubmit(Logger);
+            return Task.CompletedTask;
+        }
+
+        if (!Session.CanRetry)
+        {
+            ErrorMessage = "There is no failed answer to retry. Enter a new question instead.";
+            return Task.CompletedTask;
+        }
+
+        Prompt = Session.VisibleLanes[0].LatestTurn!.Prompt;
+        return SubmitAsync();
+    }
+
     private void NewTasteTest()
     {
         Session.Reset();
@@ -331,7 +399,11 @@
         ErrorMessage = null;
     }
 
-    private void Cancel() => _requestCancellation?.Cancel();
+    private void Cancel()
+    {
+        _cancelRequested = true;
+        _requestCancellation?.Cancel();
+    }
 
     private static string Format(TimeSpan value) =>
         value.TotalSeconds < 1
@@ -342,7 +414,7 @@
     {
         ProviderKind.OpenAI => $"""new OpenAIClient(...).GetResponsesClient().AsIChatClient("{modelId}")""",
         ProviderKind.Anthropic => $"""new AnthropicFoundryClient(...).AsIChatClient("{modelId}")""",
-        _ => string.Empty
+        _ => throw ModelCatalog.UnknownProvider(provider)
     };
 
     public void Dispose()

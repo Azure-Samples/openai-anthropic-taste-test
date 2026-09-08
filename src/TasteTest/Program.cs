@@ -19,7 +19,7 @@ builder.Services.AddProblemDetails();
 builder.Services.AddHealthChecks();
 
 // Streaming responses stay open far longer than the 100-second default, so the request's own
-// cancellation token bounds each call instead of the client timeout.
+// per-lane deadline and cancellation token bound each call instead of the client timeout.
 builder.Services.AddHttpClient(ModelClientNames.OpenAI)
     .ConfigureHttpClient(static client => client.Timeout = Timeout.InfiniteTimeSpan);
 builder.Services.AddHttpClient(ModelClientNames.Anthropic)

@@ -152,6 +152,9 @@ public sealed class TasteTestSessionTests
         var failed = session.Lanes.Single(lane => lane.HasError);
 
         Assert.NotEmpty(healthy.Turns[0].Response);
+        Assert.True(healthy.LatestTurn!.IsComplete);
+        Assert.False(healthy.LatestTurn.IncludedInHistory);
+        Assert.True(session.CanRetry);
         Assert.False(session.CanPick);
         Assert.Throws<InvalidOperationException>(() => session.PickWinner(healthy));
 
@@ -213,14 +216,24 @@ public sealed class TasteTestSessionTests
         var session = CreateSession(factory);
         using var cancellation = new CancellationTokenSource();
         var streaming = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         factory.Anthropic.AfterText = async token =>
         {
             streaming.TrySetResult();
             await Task.Delay(Timeout.InfiniteTimeSpan, token);
         };
 
-        var pending = session.SendAsync("Canceled prompt", _ => Task.CompletedTask, cancellation.Token);
+        var pending = session.SendAsync("Canceled prompt", _ =>
+        {
+            if (session.Lanes[0].LatestTurn is { IsComplete: true })
+            {
+                firstCompleted.TrySetResult();
+            }
+
+            return Task.CompletedTask;
+        }, cancellation.Token);
         await streaming.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await firstCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.True(session.IsBusy);
         Assert.False(session.CanPick);
         Assert.Throws<InvalidOperationException>(session.Reset);
@@ -244,6 +257,28 @@ public sealed class TasteTestSessionTests
         Assert.True(session.CanPick);
         Assert.Equal([1, 1], factory.OpenAI.MessageCounts);
         Assert.Equal([1, 1], factory.Anthropic.MessageCounts);
+    }
+
+    [Fact]
+    public async Task SendAsync_CancelAfterBothAnswersStillOffersRetryWithoutCommitting()
+    {
+        using var factory = new TrackingClientFactory();
+        var session = CreateSession(factory);
+        using var cancellation = new CancellationTokenSource();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => session.SendAsync("Question", _ =>
+        {
+            if (session.Lanes.All(lane => lane.LatestTurn is { IsComplete: true }))
+            {
+                cancellation.Cancel();
+            }
+
+            return Task.CompletedTask;
+        }, cancellation.Token));
+
+        Assert.All(session.Lanes, lane => Assert.False(lane.LatestTurn!.IncludedInHistory));
+        Assert.False(session.CanPick);
+        Assert.True(session.CanRetry);
     }
 
     [Fact]
@@ -315,6 +350,97 @@ public sealed class TasteTestSessionTests
         Assert.False(session.IsBusy);
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("An answer that stops mid")]
+    public async Task SendAsync_TokenLimitIsNotACompletedAnswer(string text)
+    {
+        using var factory = new TrackingClientFactory();
+        factory.Anthropic.ResponseText = text;
+        factory.Anthropic.FinishReason = ChatFinishReason.Length;
+        var session = CreateSession(factory);
+
+        await session.SendAsync("Question", _ => Task.CompletedTask);
+
+        Assert.Contains("token limit", session.Lanes[1].Error!, StringComparison.Ordinal);
+        Assert.False(session.Lanes[1].LatestTurn!.IsComplete);
+        Assert.NotNull(session.Lanes[1].LatestTurn!.Usage);
+        Assert.True(session.Lanes[0].LatestTurn!.IsComplete);
+        Assert.False(session.CanPick);
+        Assert.True(session.CanRetry);
+        Assert.All(session.Lanes, lane => Assert.False(lane.LatestTurn!.IncludedInHistory));
+
+        factory.Anthropic.FinishReason = ChatFinishReason.Stop;
+        factory.Anthropic.ResponseText = "Complete answer";
+        await session.SendAsync("Question", _ => Task.CompletedTask);
+        Assert.True(session.CanPick);
+        Assert.False(session.CanRetry);
+        Assert.Equal([1, 1], factory.Anthropic.MessageCounts);
+    }
+
+    [Fact]
+    public async Task SendAsync_StreamWithoutTerminalCompletionCannotWin()
+    {
+        using var factory = new TrackingClientFactory();
+        factory.OpenAI.FinishReason = null;
+        var session = CreateSession(factory);
+
+        await session.SendAsync("Question", _ => Task.CompletedTask);
+
+        Assert.Contains("without a completed answer", session.Lanes[0].Error!, StringComparison.Ordinal);
+        Assert.False(session.CanPick);
+        Assert.True(session.CanRetry);
+    }
+
+    [Fact]
+    public async Task SendAsync_DeadlineStopsAHungLaneAndAllowsRetry()
+    {
+        using var factory = new TrackingClientFactory();
+        factory.Anthropic.AfterText = token => Task.Delay(Timeout.InfiniteTimeSpan, token);
+        var session = CreateSession(factory, new TasteTestOptions { UseSampleResponses = true, RequestTimeoutSeconds = 1 });
+
+        await session.SendAsync("Question", _ => Task.CompletedTask).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.False(session.IsBusy);
+        Assert.Contains("timed out", session.Lanes[1].Error!, StringComparison.Ordinal);
+        Assert.True(session.CanRetry);
+        factory.Anthropic.AfterText = null;
+        await session.SendAsync("Retry", _ => Task.CompletedTask);
+        Assert.True(session.CanPick);
+    }
+
+    [Fact]
+    public async Task SendAsync_SynchronousProviderStartupDoesNotBlockCallerOrOtherLane()
+    {
+        using var factory = new TrackingClientFactory();
+        using var release = new ManualResetEventSlim();
+        var otherLaneStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        factory.OpenAI.BeforeText = () =>
+        {
+            if (!release.Wait(TimeSpan.FromSeconds(5)))
+            {
+                throw new TimeoutException("Synchronous startup blocked the caller.");
+            }
+        };
+        factory.Anthropic.BeforeText = () => otherLaneStarted.TrySetResult();
+        var session = CreateSession(factory);
+
+        var pending = session.SendAsync("Question", _ => Task.CompletedTask);
+        try
+        {
+            Assert.True(session.IsBusy);
+            await otherLaneStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.False(pending.IsCompleted);
+        }
+        finally
+        {
+            release.Set();
+            await pending;
+        }
+
+        Assert.True(session.CanPick);
+    }
+
     [Fact]
     public async Task GetIdentity_ByProviderIsAvailableOnlyAfterReveal()
     {
@@ -364,11 +490,11 @@ public sealed class TasteTestSessionTests
         Assert.Equal(5, forcedRenders);
     }
 
-    private static TasteTestSession CreateSession(IModelChatClientFactory factory) =>
+    private static TasteTestSession CreateSession(IModelChatClientFactory factory, TasteTestOptions? options = null) =>
         new(
             factory,
             new FixedLaneOrderRandomizer(),
-            Options.Create(new TasteTestOptions { UseSampleResponses = true }),
+            Options.Create(options ?? new TasteTestOptions { UseSampleResponses = true }),
             NullLogger<TasteTestSession>.Instance);
 
     private sealed class FixedLaneOrderRandomizer : ILaneOrderRandomizer
@@ -421,6 +547,10 @@ public sealed class TasteTestSessionTests
 
         public Func<CancellationToken, Task>? AfterText { get; set; }
 
+        public Action? BeforeText { get; set; }
+
+        public ChatFinishReason? FinishReason { get; set; } = ChatFinishReason.Stop;
+
         public void FailWith(Exception? failure) => _failure = failure;
 
         public Task<ChatResponse> GetResponseAsync(
@@ -451,6 +581,7 @@ public sealed class TasteTestSessionTests
                 throw _failure;
             }
 
+            BeforeText?.Invoke();
             yield return new ChatResponseUpdate(ChatRole.Assistant, ResponseText);
             if (AfterText is not null)
             {
@@ -459,6 +590,7 @@ public sealed class TasteTestSessionTests
 
             yield return new ChatResponseUpdate
             {
+                FinishReason = FinishReason,
                 Contents = [new UsageContent(new UsageDetails())],
                 ConversationId = "provider-state-not-reused-in-v1"
             };

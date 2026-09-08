@@ -64,10 +64,10 @@ param claudeCountryCode string = 'US'
 ])
 param claudeIndustry string = 'technology'
 
-@description('Maximum output tokens requested by each lane.')
+@description('Maximum output tokens per lane, including reasoning tokens as well as visible text.')
 @minValue(128)
 @maxValue(16384)
-param maxOutputTokens int = 900
+param maxOutputTokens int = 4096
 
 @description('Minimum Container Apps replicas. Use 1 for a warm demo or 0 to minimize idle cost.')
 @minValue(0)

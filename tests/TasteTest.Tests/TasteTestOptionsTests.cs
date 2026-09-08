@@ -6,6 +6,23 @@ namespace TasteTest.Tests;
 public sealed class TasteTestOptionsTests
 {
     [Fact]
+    public void Defaults_LeaveRoomForReasoningAndBoundRequestDuration()
+    {
+        var options = new TasteTestOptions();
+        Assert.Equal(4096, options.MaxOutputTokens);
+        Assert.Equal(120, options.RequestTimeoutSeconds);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(601)]
+    public void Validate_RejectsUnboundedRequestTimeout(int seconds)
+    {
+        var options = new TasteTestOptions { UseSampleResponses = true, RequestTimeoutSeconds = seconds };
+        Assert.Throws<OptionsValidationException>(options.Validate);
+    }
+
+    [Fact]
     public void FromConfiguration_UsesAzdEnvironmentVariables()
     {
         var configuration = new ConfigurationBuilder()

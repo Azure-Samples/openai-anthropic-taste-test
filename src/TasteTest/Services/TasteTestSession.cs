@@ -60,6 +60,9 @@ public sealed class TasteTestSession
         !IsBusy &&
         _lanes.TrueForAll(lane => lane.LatestTurn is { IncludedInHistory: true });
 
+    public bool CanRetry => !IsBusy &&
+        VisibleLanes.Any(lane => lane.LatestTurn is { IncludedInHistory: false });
+
     public bool UseSampleResponses => _options.UseSampleResponses;
 
     public IReadOnlyList<string> SeedPrompts => _options.SeedPrompts;
@@ -109,8 +112,11 @@ public sealed class TasteTestSession
 
         try
         {
+            // Credential acquisition can block synchronously inside a vendor SDK. Keep it off
+            // the Blazor circuit so both lanes start independently and Cancel stays responsive.
             var responses = await Task.WhenAll(attempts.Select(attempt =>
-                StreamLaneAsync(attempt.Lane, attempt.Turn, notifyProgress, cancellationToken)));
+                Task.Run(() => StreamLaneAsync(
+                    attempt.Lane, attempt.Turn, notifyProgress, cancellationToken), CancellationToken.None)));
 
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -195,11 +201,14 @@ public sealed class TasteTestSession
     {
         var updates = new List<ChatResponseUpdate>();
         var startedAt = Stopwatch.GetTimestamp();
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(_options.RequestTimeoutSeconds));
+        var requestToken = deadline.Token;
 
         try
         {
             await notifyProgress(true);
-            cancellationToken.ThrowIfCancellationRequested();
+            requestToken.ThrowIfCancellationRequested();
             var client = _clients.GetClient(lane.Provider);
             var chatOptions = new ChatOptions
             {
@@ -214,9 +223,10 @@ public sealed class TasteTestSession
             };
 
             await foreach (var update in client
-                .GetStreamingResponseAsync(messages, chatOptions, cancellationToken)
+                .GetStreamingResponseAsync(messages, chatOptions, requestToken)
                 .ConfigureAwait(false))
             {
+                requestToken.ThrowIfCancellationRequested();
                 updates.Add(update);
 
                 if (turn.TimeToFirstToken is null && !string.IsNullOrEmpty(update.Text))
@@ -231,7 +241,31 @@ public sealed class TasteTestSession
             // ToChatResponse folds provider-specific usage content into one UsageDetails, so the
             // OpenAI Responses and Anthropic Messages token counts arrive in the same shape.
             var response = updates.ToChatResponse();
+            requestToken.ThrowIfCancellationRequested();
             turn.Usage = response.Usage;
+            turn.FinishReason = response.FinishReason;
+            if (_logger.IsEnabled(LogLevel.Information))
+            {
+                TasteTestLog.StreamFinished(_logger, lane.Label, lane.Provider,
+                    response.FinishReason, response.Usage?.OutputTokenCount,
+                    response.Usage?.ReasoningTokenCount, response.Text.Length);
+            }
+
+            if (response.FinishReason == ChatFinishReason.Length)
+            {
+                turn.Error = "The response reached its token limit before finishing. " +
+                    "Reasoning can use this budget before any text appears. " +
+                    "Try a shorter question, or increase TASTE_TEST_MAX_OUTPUT_TOKENS and restart the app.";
+                return null;
+            }
+
+            if (response.FinishReason != ChatFinishReason.Stop)
+            {
+                turn.Error = response.FinishReason == ChatFinishReason.ContentFilter
+                    ? "This response was blocked by a content filter. Rephrase your question and try again."
+                    : "The response stream ended without a completed answer. Please retry.";
+                return null;
+            }
 
             if (string.IsNullOrWhiteSpace(response.Text))
             {
@@ -240,6 +274,7 @@ public sealed class TasteTestSession
                 return null;
             }
 
+            turn.IsComplete = true;
             turn.IsStreaming = false;
             return response;
         }
@@ -250,7 +285,7 @@ public sealed class TasteTestSession
         }
         catch (OperationCanceledException exception)
         {
-            turn.Error = "This lane timed out. Please try again.";
+            turn.Error = $"This lane timed out. Requests are limited to {_options.RequestTimeoutSeconds} seconds. Please retry.";
             TasteTestLog.LaneFailed(_logger, exception, lane.Label, lane.Provider);
             return null;
         }
