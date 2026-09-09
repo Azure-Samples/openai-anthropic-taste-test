@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1640 720"
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1640 780"
      font-family="'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif">
-  <title>One IChatClient, two official SDKs, two wire protocols on Microsoft Foundry</title>
+  <title>OpenAI + Anthropic Taste Test using Microsoft.Extensions.AI</title>
   <desc>
     A .NET 10 application programs against a single Microsoft.Extensions.AI IChatClient. That one
     abstraction fans out to two lanes. The OpenAI lane uses the OpenAI SDK for .NET, calling
@@ -10,6 +10,7 @@
     Anthropic C# SDK, calling AnthropicFoundryClient(...).AsIChatClient() over the Messages API at
     the /anthropic route to a claude-opus-5 deployment of Claude in Microsoft Foundry. Both lanes
     authenticate with Microsoft Entra ID and use no API keys.
+    Get the sample at https://aka.ms/meai/start.
   </desc>
 
   <defs>
@@ -62,15 +63,15 @@
     </symbol>
   </defs>
 
-  <rect width="1640" height="720" fill="url(#canvas)"/>
+  <rect width="1640" height="780" fill="url(#canvas)"/>
 
   <!-- Title -->
   <g transform="translate(820 58)" text-anchor="middle">
-    <text y="0" font-size="34" font-weight="700" fill="#0A2540" letter-spacing="-0.4">
-      One <tspan font-family="'Cascadia Code', Consolas, monospace" fill="#512BD4">IChatClient</tspan>. Two official SDKs. Two wire protocols.
+    <text id="diagram-heading" y="0" font-size="32" font-weight="700" fill="#0A2540" letter-spacing="-0.4">
+      OpenAI + Anthropic Taste Test using <tspan fill="#512BD4">Microsoft.Extensions.AI</tspan>
     </text>
     <text y="34" font-size="16" fill="#5A6B7C">
-      Microsoft.Extensions.AI fans one .NET call path out to Azure OpenAI and Claude on Microsoft Foundry
+      One IChatClient. Two official SDKs. Responses and Messages APIs on Microsoft Foundry.
     </text>
   </g>
 
@@ -194,4 +195,11 @@
       <tspan dx="10" font-weight="700" fill="#0A2540">One</tspan><tspan font-family="'Cascadia Code', Consolas, monospace" fill="#0A2540"> azd up</tspan>
     </text>
   </g>
+  <a href="https://aka.ms/meai/start" aria-label="Get the sample at aka.ms/meai/start">
+    <g transform="translate(620 692)">
+      <rect width="400" height="52" rx="26" fill="#512BD4"/>
+      <text id="repo-short-link" x="200" y="34" text-anchor="middle"
+            font-size="26" font-weight="700" fill="#FFFFFF">aka.ms/meai/start</text>
+    </g>
+  </a>
 </svg>

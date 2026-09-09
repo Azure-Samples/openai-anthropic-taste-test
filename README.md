@@ -8,7 +8,7 @@ Ask GPT and Claude the same question. Read both answers without knowing which is
 
 Underneath, it is one .NET interface — `IChatClient` — talking to two different vendor SDKs over two different wire protocols, both running on Microsoft Foundry.
 
-![One IChatClient fans out to the OpenAI SDK for .NET over the Responses API and the Anthropic C# SDK over the Messages API, reaching gpt-5.6-sol and claude-opus-5 on Microsoft Foundry](docs/img/architecture.png)
+[![One IChatClient fans out to the OpenAI SDK for .NET over the Responses API and the Anthropic C# SDK over the Messages API, reaching gpt-5.6-sol and claude-opus-5 on Microsoft Foundry. Get the sample at aka.ms/meai/start.](docs/img/architecture.png)](https://aka.ms/meai/start)
 
 ## What you'll see
 
