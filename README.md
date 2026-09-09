@@ -1,4 +1,4 @@
-# OpenAI + Anthropic Taste Test on Microsoft Foundry
+# OpenAI + Anthropic Taste Test using Microsoft.Extensions.AI
 
 [![Build and test](https://github.com/Azure-Samples/openai-anthropic-taste-test/actions/workflows/ci.yml/badge.svg)](https://github.com/Azure-Samples/openai-anthropic-taste-test/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
