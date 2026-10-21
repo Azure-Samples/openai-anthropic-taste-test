@@ -6,9 +6,9 @@
     A .NET 10 application programs against a single Microsoft.Extensions.AI IChatClient. That one
     abstraction fans out to two lanes. The OpenAI lane uses the OpenAI SDK for .NET, calling
     GetResponsesClient().AsIChatClient() over the Responses API at the /openai/v1 route to a
-    gpt-5.6-sol deployment of Azure OpenAI in Microsoft Foundry. The Anthropic lane uses the
+    gpt-6-astra deployment of Azure OpenAI in Microsoft Foundry. The Anthropic lane uses the
     Anthropic C# SDK, calling AnthropicFoundryClient(...).AsIChatClient() over the Messages API at
-    the /anthropic route to a claude-opus-5 deployment of Claude in Microsoft Foundry. Both lanes
+    the /anthropic route to a claude-opus-5-5 deployment of Claude in Microsoft Foundry. Both lanes
     authenticate with Microsoft Entra ID and use no API keys.
     Get the sample at https://aka.ms/meai/start.
   </desc>
@@ -81,7 +81,7 @@
           fill="#FFFFFF" stroke="#D7E2ED" stroke-width="1.4" filter="url(#softShadow)"/>
     <use href="#logoDotnet" x="24" y="22" width="44" height="44"/>
     <text x="24" y="88" font-size="16" font-weight="700" fill="#0A2540">.NET 10 app</text>
-    <text x="24" y="108" font-size="12.5" fill="#8A97A5">Blazor Server</text>
+    <text x="24" y="108" font-size="12.5" fill="#8A97A5">Runtime 10.0.13</text>
   </g>
 
   <!-- MEAI, the centrepiece -->
@@ -117,7 +117,7 @@
 
     <use href="#logoOpenAI" x="34" y="42" width="52" height="52"/>
     <text x="104" y="62" font-size="21" font-weight="700" fill="#0A2540">OpenAI SDK for .NET</text>
-    <text x="104" y="86" font-size="13" fill="#5A6B7C">NuGet: OpenAI &#183; Microsoft.Extensions.AI.OpenAI</text>
+    <text x="104" y="86" font-size="12" fill="#5A6B7C">OpenAI 2.14.0 &#183; MEAI.OpenAI 10.11.0</text>
 
     <rect x="104" y="102" width="330" height="34" rx="8" fill="#0A2540"/>
     <text x="120" y="124" font-family="'Cascadia Code', Consolas, monospace" font-size="12.5" fill="#6EE7B7">GetResponsesClient().AsIChatClient()</text>
@@ -135,7 +135,8 @@
     <text x="520" y="115" font-size="13" fill="#5A6B7C">in Microsoft Foundry Models</text>
     <rect x="520" y="133" width="184" height="30" rx="8" fill="#F0F5F3" stroke="#C9DED7"/>
     <text x="612" y="153" text-anchor="middle"
-          font-family="'Cascadia Code', Consolas, monospace" font-size="13" fill="#0B7A5F">gpt-5.6-sol</text>
+          font-family="'Cascadia Code', Consolas, monospace" font-size="13" fill="#0B7A5F">gpt-6-astra</text>
+    <text x="612" y="188" text-anchor="middle" font-size="12" fill="#5A6B7C">Version 2026-09-03</text>
   </g>
 
   <!-- Anthropic lane -->
@@ -145,7 +146,7 @@
 
     <use href="#logoAnthropic" x="37" y="46" width="46" height="46"/>
     <text x="104" y="62" font-size="21" font-weight="700" fill="#0A2540">Anthropic C# SDK</text>
-    <text x="104" y="86" font-size="13" fill="#5A6B7C">NuGet: Anthropic &#183; Anthropic.Foundry</text>
+    <text x="104" y="86" font-size="12" fill="#5A6B7C">Anthropic 13.1.0 &#183; Anthropic.Foundry 1.0.0</text>
 
     <rect x="104" y="102" width="330" height="34" rx="8" fill="#0A2540"/>
     <text x="120" y="124" font-family="'Cascadia Code', Consolas, monospace" font-size="12.5" fill="#FBBF9C">AnthropicFoundryClient().AsIChatClient()</text>
@@ -164,7 +165,8 @@
     <text x="520" y="115" font-size="13" fill="#5A6B7C">in Microsoft Foundry &#183; Hosted on Azure</text>
     <rect x="520" y="133" width="184" height="30" rx="8" fill="#FBF0EA" stroke="#EBD0C2"/>
     <text x="612" y="153" text-anchor="middle"
-          font-family="'Cascadia Code', Consolas, monospace" font-size="13" fill="#B4532F">claude-opus-5</text>
+          font-family="'Cascadia Code', Consolas, monospace" font-size="13" fill="#B4532F">claude-opus-5-5</text>
+    <text x="612" y="188" text-anchor="middle" font-size="12" fill="#5A6B7C">Version 2 &#183; Hosted on Azure</text>
   </g>
 
   <!-- App into MEAI -->

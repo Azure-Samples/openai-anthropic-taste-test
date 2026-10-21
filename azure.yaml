@@ -2,9 +2,9 @@
 
 name: openai-anthropic-taste-test
 metadata:
-  template: openai-anthropic-taste-test@0.1.0
+  template: openai-anthropic-taste-test@0.2.0
 requiredVersions:
-  azd: ">= 1.17.0"
+  azd: ">= 1.37.1"
 infra:
   provider: bicep
   path: infra

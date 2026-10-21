@@ -32,7 +32,11 @@ public sealed class FoundryModelChatClientFactoryTests
 
         await foreach (var update in factory.GetClient(provider).GetStreamingResponseAsync(
             [new ChatMessage(ChatRole.User, "Test prompt")],
-            new ChatOptions { MaxOutputTokens = 4096 }))
+            new ChatOptions
+            {
+                MaxOutputTokens = 4096,
+                Reasoning = new() { Effort = ReasoningEffort.Low }
+            }))
         {
             updates.Add(update);
         }
@@ -49,6 +53,17 @@ public sealed class FoundryModelChatClientFactoryTests
         Assert.True(body.RootElement.GetProperty("stream").GetBoolean());
         Assert.Equal(4096, body.RootElement.GetProperty(
             provider == ProviderKind.OpenAI ? "max_output_tokens" : "max_tokens").GetInt32());
+        if (provider == ProviderKind.OpenAI)
+        {
+            Assert.Equal("low", body.RootElement.GetProperty("reasoning").GetProperty("effort").GetString());
+        }
+        else
+        {
+            var thinking = body.RootElement.GetProperty("thinking");
+            Assert.Equal("adaptive", thinking.GetProperty("type").GetString());
+            Assert.False(thinking.TryGetProperty("budget_tokens", out _));
+            Assert.Equal("low", body.RootElement.GetProperty("output_config").GetProperty("effort").GetString());
+        }
     }
 
     [Theory]
@@ -168,7 +183,11 @@ public sealed class FoundryModelChatClientFactoryTests
 
     private static string CreateStream(bool openAI, bool tokenLimit, bool partialText)
     {
-        static string Event(string json) => $"data: {json}\n\n";
+        static string Event(string json)
+        {
+            using var document = JsonDocument.Parse(json);
+            return $"event: {document.RootElement.GetProperty("type").GetString()}\ndata: {json}\n\n";
+        }
 
         if (openAI)
         {

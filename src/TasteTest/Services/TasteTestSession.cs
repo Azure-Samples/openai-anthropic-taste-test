@@ -213,7 +213,8 @@ public sealed class TasteTestSession
             var chatOptions = new ChatOptions
             {
                 Instructions = _options.SystemPrompt,
-                MaxOutputTokens = _options.MaxOutputTokens
+                MaxOutputTokens = _options.MaxOutputTokens,
+                Reasoning = new() { Effort = ReasoningEffort.Low }
             };
 
             // Neither the SDK nor a failed call can append an incomplete user turn to history.

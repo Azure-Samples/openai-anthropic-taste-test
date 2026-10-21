@@ -12,9 +12,9 @@ function Write-WarningMessage([string]$Message) {
     Write-Host "Preflight: $Message" -ForegroundColor Yellow
 }
 
-$claudeModel = if ($env:CLAUDE_MODEL_NAME) { $env:CLAUDE_MODEL_NAME } else { "claude-opus-5" }
+$claudeModel = if ($env:CLAUDE_MODEL_NAME) { $env:CLAUDE_MODEL_NAME } else { "claude-opus-5-5" }
 $claudeCapacity = if ($env:CLAUDE_MODEL_CAPACITY) { [int]$env:CLAUDE_MODEL_CAPACITY } else { 25 }
-$aoaiModel = if ($env:AOAI_MODEL_NAME) { $env:AOAI_MODEL_NAME } else { "gpt-5.6-sol" }
+$aoaiModel = if ($env:AOAI_MODEL_NAME) { $env:AOAI_MODEL_NAME } else { "gpt-6-astra" }
 $aoaiCapacity = if ($env:AOAI_MODEL_CAPACITY) { [int]$env:AOAI_MODEL_CAPACITY } else { 10 }
 
 if (-not $env:CLAUDE_ORGANIZATION_NAME) {
@@ -40,7 +40,7 @@ if (-not $subscriptionId) {
 
 Write-Host "Preflight: subscription $subscriptionId, location $env:AZURE_LOCATION"
 Write-Host "Preflight: Claude $claudeModel@$claudeCapacity; OpenAI $aoaiModel@$aoaiCapacity"
-Write-Host "Preflight: Claude Hosted on Azure requires a paid Marketplace-eligible subscription. modelProviderData will auto-accept the offer during deployment."
+Write-Host "Preflight: Claude Hosted on Azure requires a Marketplace-eligible subscription. modelProviderData will auto-accept the offer during deployment."
 
 $permissionsUri = "https://management.azure.com/subscriptions/$subscriptionId/providers/Microsoft.Authorization/permissions?api-version=2015-07-01"
 $roleAssignmentGrants = az rest --method get --url $permissionsUri --query "length(value[?contains(actions, '*') || contains(actions, 'Microsoft.Authorization/roleAssignments/write')])" -o tsv 2>$null
@@ -55,10 +55,10 @@ models only and run the app locally:
 }
 
 foreach ($model in @(
-    [pscustomobject]@{ Name = $claudeModel; Capacity = $claudeCapacity },
-    [pscustomobject]@{ Name = $aoaiModel; Capacity = $aoaiCapacity }
+    [pscustomobject]@{ Name = $claudeModel; Capacity = $claudeCapacity; Format = 'AIServices' },
+    [pscustomobject]@{ Name = $aoaiModel; Capacity = $aoaiCapacity; Format = 'OpenAI' }
 )) {
-    $sku = "AIServices.GlobalStandard.$($model.Name)"
+    $sku = "$($model.Format).GlobalStandard.$($model.Name)"
     $limit = az cognitiveservices usage list --location $env:AZURE_LOCATION --query "[?name.value=='$sku'].limit | [0]" -o tsv 2>$null
     $current = az cognitiveservices usage list --location $env:AZURE_LOCATION --query "[?name.value=='$sku'].currentValue | [0]" -o tsv 2>$null
 

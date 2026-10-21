@@ -8,7 +8,7 @@ Ask GPT and Claude the same question. Read both answers without knowing which is
 
 Underneath, it is one .NET interface — `IChatClient` — talking to two different vendor SDKs over two different wire protocols, both running on Microsoft Foundry.
 
-[![One IChatClient fans out to the OpenAI SDK for .NET over the Responses API and the Anthropic C# SDK over the Messages API, reaching gpt-5.6-sol and claude-opus-5 on Microsoft Foundry. Get the sample at aka.ms/meai/start.](docs/img/architecture.png)](https://aka.ms/meai/start)
+[![One IChatClient fans out to the OpenAI SDK for .NET over the Responses API and the Anthropic C# SDK over the Messages API, reaching gpt-6-astra and claude-opus-5-5 on Microsoft Foundry. Get the sample at aka.ms/meai/start.](docs/img/architecture.png)](https://aka.ms/meai/start)
 
 ## What you'll see
 
@@ -22,7 +22,7 @@ Live answers show time to first visible text, total time, and API-reported token
 
 ## Try it now, no Azure needed
 
-You only need the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0).
+You only need the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0), version **10.0.402 or later**.
 
 ```powershell
 git clone https://github.com/Azure-Samples/openai-anthropic-taste-test
@@ -50,7 +50,9 @@ azd up
 | An Azure subscription | Must be allowed to buy Anthropic models from Azure Marketplace |
 | Permission to create resources | `Owner`, or `Contributor` + `Role Based Access Control Administrator` |
 | Model quota | Enough capacity for one GPT and one Claude deployment |
-| Tools | [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) and [Azure Developer CLI](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd) 1.17+ |
+| Tools | [.NET SDK 10.0.402+](https://dotnet.microsoft.com/download/dotnet/10.0) and [Azure Developer CLI 1.37.1+](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd) |
+
+Choose **eastus2** or **swedencentral**. Both default models are generally available there. GPT-6 Astra is still preview in westus2, so this template no longer offers that region.
 
 Not every subscription can deploy Claude. CSP, free-trial, student, and some sponsored subscriptions are not eligible. See [Deploy and use Claude models in Microsoft Foundry](https://learn.microsoft.com/azure/foundry/foundry-models/how-to/use-foundry-models-claude).
 
@@ -162,7 +164,11 @@ var responses = await Task.WhenAll(lanes.Select(async lane =>
 
     await foreach (var update in lane.Client.GetStreamingResponseAsync(
         messages,
-        new ChatOptions { MaxOutputTokens = 4096 },
+        new ChatOptions
+        {
+            MaxOutputTokens = 4096,
+            Reasoning = new() { Effort = ReasoningEffort.Low }
+        },
         cancellationToken))
     {
         updates.Add(update);
@@ -176,7 +182,9 @@ var responses = await Task.WhenAll(lanes.Select(async lane =>
 
 `ToChatResponse()` also folds each provider's usage reporting into one `UsageDetails`, which is why the page can show token counts for both lanes without any provider-specific code.
 
-The OpenAI construction includes a small [completion adapter](src/TasteTest/Services/OpenAIStreamCompletionClient.cs): MEAI.OpenAI 10.9.0 forwards `response.incomplete` without its finish reason or usage. The adapter uses the SDK's native response conversion to preserve both, without duplicating streamed text. The shared application loop stays provider-neutral.
+The OpenAI construction includes a small [completion adapter](src/TasteTest/Services/OpenAIStreamCompletionClient.cs): MEAI.OpenAI 10.11.0 still forwards `response.incomplete` without its finish reason or usage. The adapter uses the SDK's native response conversion to preserve both, without duplicating streamed text. The shared application loop stays provider-neutral.
+
+Both lanes request low reasoning effort for short, responsive comparisons. Anthropic 13 maps this shared option to adaptive thinking and `output_config.effort`, not the legacy `budget_tokens` setting that current Claude models reject. The models are the flagship defaults; this sample is not a maximum-effort benchmark.
 
 Swapping either lane for a different model is a configuration change, not a rewrite.
 
@@ -198,8 +206,8 @@ Being precise so nothing here is oversold:
 | Resource | Why |
 |---|---|
 | Microsoft Foundry account and project | One endpoint for both model families |
-| `gpt-5.6-sol` deployment | The OpenAI Responses lane |
-| `claude-opus-5` (version 2, Hosted on Azure) | The Anthropic Messages lane |
+| `gpt-6-astra` deployment | The OpenAI Responses lane |
+| `claude-opus-5-5` (version 2, Hosted on Azure) | The Anthropic Messages lane |
 | Azure Container App | Runs the Blazor Server app |
 | User-assigned managed identity | Lets the app reach Foundry without secrets |
 | Azure Container Registry | Stores the image built by `azd deploy` |
@@ -226,19 +234,21 @@ Before a demo, run a real comparison, vote, and ask a follow-up. The no-Azure pr
 <details>
 <summary><b>Use different models</b></summary>
 
-Defaults, current as of September 2, 2026:
+Defaults verified against the Azure model catalog on **October 21, 2026**:
 
 | Setting | Default |
 |---|---|
-| `CLAUDE_MODEL_NAME` | `claude-opus-5` |
+| `CLAUDE_MODEL_NAME` | `claude-opus-5-5` |
 | `CLAUDE_MODEL_VERSION` | `2` (Hosted on Azure) |
 | `CLAUDE_MODEL_CAPACITY` | `25` |
-| `AOAI_MODEL_NAME` | `gpt-5.6-sol` |
-| `AOAI_MODEL_VERSION` | `2026-07-09` |
+| `AOAI_MODEL_NAME` | `gpt-6-astra` |
+| `AOAI_MODEL_VERSION` | `2026-09-03` |
 | `AOAI_MODEL_CAPACITY` | `10` |
 | `TASTE_TEST_MAX_OUTPUT_TOKENS` | `4096` |
 
-This budget covers reasoning as well as visible answers. The old 900-token budget could be exhausted before any text appeared. If an existing environment still sets that value, update it and restart the local app:
+GPT-6 Astra is Azure OpenAI's highest-capability general-purpose model. Opus 5.5 is the highest-capability generally available Claude model Hosted on Azure. Newer or preview models are not automatically better defaults: GPT-6.1 Sol targets lower cost, while Claude Fable is currently preview and hosted on Anthropic infrastructure. See the [Azure model catalog](https://learn.microsoft.com/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure) and [Claude availability](https://learn.microsoft.com/azure/foundry/foundry-models/concepts/claude-models).
+
+The token budget covers reasoning as well as visible answers. If an existing environment still uses the old 900-token setting, update it and restart the local app:
 
 ```powershell
 azd env set TASTE_TEST_MAX_OUTPUT_TOKENS 4096
@@ -249,15 +259,35 @@ For Azure hosting, preview and provision again to update the app setting.
 A faster, cheaper pair for rehearsals:
 
 ```powershell
-azd env set CLAUDE_MODEL_NAME claude-sonnet-5
+azd env set CLAUDE_MODEL_NAME claude-sonnet-5-5
 azd env set CLAUDE_MODEL_VERSION 2
-azd env set AOAI_MODEL_NAME gpt-5.4-mini
-azd env set AOAI_MODEL_VERSION 2026-03-17
+azd env set AOAI_MODEL_NAME gpt-6.1-sol
+azd env set AOAI_MODEL_VERSION 2026-09-29
+azd provision --preview
 azd provision
 azd deploy
 ```
 
 Check model versions, regions, and quota in the Foundry model catalog before changing these.
+
+</details>
+
+<details>
+<summary><b>Update an existing environment</b></summary>
+
+Pulling the code does not change saved azd settings or existing Azure deployments. In an eastus2 or swedencentral environment, explicitly select the new models:
+
+```powershell
+azd env set AOAI_MODEL_NAME gpt-6-astra
+azd env set AOAI_MODEL_VERSION 2026-09-03
+azd env set CLAUDE_MODEL_NAME claude-opus-5-5
+azd env set CLAUDE_MODEL_VERSION 2
+azd env set TASTE_TEST_MAX_OUTPUT_TOKENS 4096
+azd provision --preview
+azd provision
+```
+
+Then run the local launcher, or `azd deploy` for Azure hosting. Review the preview first: changed model names create new deployments, and incremental provisioning does not remove old ones. If your existing resources are in another region, create a new environment in a supported region rather than moving them by changing a setting.
 
 </details>
 
@@ -288,11 +318,26 @@ azd provision
 </details>
 
 <details>
-<summary><b>SDK version pinning</b></summary>
+<summary><b>Runtime and dependency versions</b></summary>
 
-Verified September 7, 2026: `Microsoft.Extensions.AI.OpenAI` 10.9.0 requires `OpenAI >= 2.12.0 && < 2.13.0`, so this template pins `OpenAI` 2.12.0 even though 2.13.0 exists. `Anthropic` is pinned to 12.46.0 rather than floating. `Anthropic.Foundry` has its own version (`0.7.1`) and does not track the `Anthropic` package version.
+Stable releases checked on **October 21, 2026**:
 
-If your package mirror lags, use NuGet.org or ask the mirror owner to sync those versions.
+| Dependency | Version |
+|---|---|
+| .NET SDK / ASP.NET Core runtime | `10.0.402` / `10.0.13` |
+| Microsoft.Extensions.AI / Microsoft.Extensions.AI.OpenAI | `10.11.0` |
+| OpenAI | `2.14.0` |
+| Anthropic / Anthropic.Foundry | `13.1.0` / `1.0.0` |
+| Azure.Identity | `1.21.0` |
+| Azure.Core / System.ClientModel | `1.63.0` / `1.16.0` |
+| Markdig | `1.4.2` |
+| Azure Developer CLI / Azure CLI / Bicep (devcontainer) | `1.37.1` / `2.91.0` / `0.48.1` |
+
+.NET 10 is the latest stable LTS; .NET 11 is still a release candidate. CI reads the SDK version from [global.json](global.json), and Docker pins the matching SDK and runtime releases. The devcontainer uses the current .NET 10 Ubuntu Noble image.
+
+MEAI.OpenAI 10.11.0 supports OpenAI 2.14.0, so the old OpenAI Dependabot exclusion has been removed. Credential, transport, and test dependencies are also pinned to current stable releases rather than older transitive minimums. Dependabot checks container images and devcontainer dependencies as well as NuGet and SHA-pinned GitHub Actions. CI builds the container in addition to building and testing the application.
+
+If your package mirror lags, use NuGet.org or ask the mirror owner to sync these versions. Anthropic 13.1.0 and Foundry 1.0.0 were released on the verification date.
 
 </details>
 

@@ -14,7 +14,7 @@ internal sealed class OpenAIStreamCompletionClient(IChatClient innerClient) : De
         await foreach (var update in InnerClient.GetStreamingResponseAsync(messages, options, cancellationToken)
             .ConfigureAwait(false))
         {
-            // MEAI.OpenAI 10.9 forwards response.incomplete as raw metadata but omits its
+            // MEAI.OpenAI 10.11 forwards response.incomplete as raw metadata but omits its
             // finish reason and usage. Reuse its native conversion without replaying text.
             if (update.RawRepresentation is StreamingResponseIncompleteUpdate incomplete)
             {

@@ -6,9 +6,9 @@ warn() {
   printf 'Preflight: %s\n' "$*" >&2
 }
 
-CLAUDE_MODEL="${CLAUDE_MODEL_NAME:-claude-opus-5}"
+CLAUDE_MODEL="${CLAUDE_MODEL_NAME:-claude-opus-5-5}"
 CLAUDE_CAPACITY="${CLAUDE_MODEL_CAPACITY:-25}"
-AOAI_MODEL="${AOAI_MODEL_NAME:-gpt-5.6-sol}"
+AOAI_MODEL="${AOAI_MODEL_NAME:-gpt-6-astra}"
 AOAI_CAPACITY="${AOAI_MODEL_CAPACITY:-10}"
 
 if [ -z "${CLAUDE_ORGANIZATION_NAME:-}" ]; then
@@ -33,7 +33,7 @@ fi
 
 echo "Preflight: subscription $SUBSCRIPTION_ID, location $AZURE_LOCATION"
 echo "Preflight: Claude $CLAUDE_MODEL@$CLAUDE_CAPACITY; OpenAI $AOAI_MODEL@$AOAI_CAPACITY"
-echo "Preflight: Claude Hosted on Azure requires a paid Marketplace-eligible subscription. modelProviderData will auto-accept the offer during deployment."
+echo "Preflight: Claude Hosted on Azure requires a Marketplace-eligible subscription. modelProviderData will auto-accept the offer during deployment."
 
 PERMISSIONS_URI="https://management.azure.com/subscriptions/$SUBSCRIPTION_ID/providers/Microsoft.Authorization/permissions?api-version=2015-07-01"
 ROLE_ASSIGNMENT_GRANTS="$(az rest --method get --url "$PERMISSIONS_URI" --query "length(value[?contains(actions, '*') || contains(actions, 'Microsoft.Authorization/roleAssignments/write')])" -o tsv 2>/dev/null || true)"
@@ -44,7 +44,8 @@ fi
 check_quota() {
   local model="$1"
   local capacity="$2"
-  local sku="AIServices.GlobalStandard.$model"
+  local format="$3"
+  local sku="$format.GlobalStandard.$model"
   local limit current available
 
   limit="$(az cognitiveservices usage list --location "$AZURE_LOCATION" --query "[?name.value=='$sku'].limit | [0]" -o tsv 2>/dev/null || true)"
@@ -67,5 +68,5 @@ check_quota() {
   fi
 }
 
-check_quota "$CLAUDE_MODEL" "$CLAUDE_CAPACITY"
-check_quota "$AOAI_MODEL" "$AOAI_CAPACITY"
+check_quota "$CLAUDE_MODEL" "$CLAUDE_CAPACITY" "AIServices"
+check_quota "$AOAI_MODEL" "$AOAI_CAPACITY" "OpenAI"
