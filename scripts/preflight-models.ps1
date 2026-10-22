@@ -12,9 +12,9 @@ function Write-WarningMessage([string]$Message) {
     Write-Host "Preflight: $Message" -ForegroundColor Yellow
 }
 
-$claudeModel = if ($env:CLAUDE_MODEL_NAME) { $env:CLAUDE_MODEL_NAME } else { "claude-opus-5-5" }
-$claudeCapacity = if ($env:CLAUDE_MODEL_CAPACITY) { [int]$env:CLAUDE_MODEL_CAPACITY } else { 25 }
-$aoaiModel = if ($env:AOAI_MODEL_NAME) { $env:AOAI_MODEL_NAME } else { "gpt-6-astra" }
+$claudeModel = if ($env:CLAUDE_MODEL_NAME) { $env:CLAUDE_MODEL_NAME } else { "claude-sonnet-5-5" }
+$claudeCapacity = if ($env:CLAUDE_MODEL_CAPACITY) { [int]$env:CLAUDE_MODEL_CAPACITY } else { 10 }
+$aoaiModel = if ($env:AOAI_MODEL_NAME) { $env:AOAI_MODEL_NAME } else { "gpt-6.1-sol" }
 $aoaiCapacity = if ($env:AOAI_MODEL_CAPACITY) { [int]$env:AOAI_MODEL_CAPACITY } else { 10 }
 
 if (-not $env:CLAUDE_ORGANIZATION_NAME) {

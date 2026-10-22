@@ -6,9 +6,9 @@
     A .NET 10 application programs against a single Microsoft.Extensions.AI IChatClient. That one
     abstraction fans out to two lanes. The OpenAI lane uses the OpenAI SDK for .NET, calling
     GetResponsesClient().AsIChatClient() over the Responses API at the /openai/v1 route to a
-    gpt-6-astra deployment of Azure OpenAI in Microsoft Foundry. The Anthropic lane uses the
+    gpt-6.1-sol deployment of Azure OpenAI in Microsoft Foundry. The Anthropic lane uses the
     Anthropic C# SDK, calling AnthropicFoundryClient(...).AsIChatClient() over the Messages API at
-    the /anthropic route to a claude-opus-5-5 deployment of Claude in Microsoft Foundry. Both lanes
+    the /anthropic route to a claude-sonnet-5-5 deployment of Claude in Microsoft Foundry. Both lanes
     authenticate with Microsoft Entra ID and use no API keys.
     Get the sample at https://aka.ms/meai/start.
   </desc>
@@ -135,8 +135,8 @@
     <text x="520" y="115" font-size="13" fill="#5A6B7C">in Microsoft Foundry Models</text>
     <rect x="520" y="133" width="184" height="30" rx="8" fill="#F0F5F3" stroke="#C9DED7"/>
     <text x="612" y="153" text-anchor="middle"
-          font-family="'Cascadia Code', Consolas, monospace" font-size="13" fill="#0B7A5F">gpt-6-astra</text>
-    <text x="612" y="188" text-anchor="middle" font-size="12" fill="#5A6B7C">Version 2026-09-03</text>
+          font-family="'Cascadia Code', Consolas, monospace" font-size="13" fill="#0B7A5F">gpt-6.1-sol</text>
+    <text x="612" y="188" text-anchor="middle" font-size="12" fill="#5A6B7C">Version 2026-09-29</text>
   </g>
 
   <!-- Anthropic lane -->
@@ -165,7 +165,7 @@
     <text x="520" y="115" font-size="13" fill="#5A6B7C">in Microsoft Foundry &#183; Hosted on Azure</text>
     <rect x="520" y="133" width="184" height="30" rx="8" fill="#FBF0EA" stroke="#EBD0C2"/>
     <text x="612" y="153" text-anchor="middle"
-          font-family="'Cascadia Code', Consolas, monospace" font-size="13" fill="#B4532F">claude-opus-5-5</text>
+          font-family="'Cascadia Code', Consolas, monospace" font-size="13" fill="#B4532F">claude-sonnet-5-5</text>
     <text x="612" y="188" text-anchor="middle" font-size="12" fill="#5A6B7C">Version 2 &#183; Hosted on Azure</text>
   </g>
 

@@ -9,8 +9,8 @@ public sealed class TasteTestOptionsTests
     public void Defaults_LeaveRoomForReasoningAndBoundRequestDuration()
     {
         var options = new TasteTestOptions();
-        Assert.Equal("gpt-6-astra", options.AoaiDeploymentName);
-        Assert.Equal("claude-opus-5-5", options.ClaudeDeploymentName);
+        Assert.Equal("gpt-6.1-sol", options.AoaiDeploymentName);
+        Assert.Equal("claude-sonnet-5-5", options.ClaudeDeploymentName);
         Assert.Equal(4096, options.MaxOutputTokens);
         Assert.Equal(120, options.RequestTimeoutSeconds);
     }

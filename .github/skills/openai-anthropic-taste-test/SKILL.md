@@ -77,8 +77,10 @@ context. Ask only for values still missing:
 - Industry; default `technology`
 
 Use the model defaults in `infra/main.parameters.json` unless the customer asks to change them:
-`gpt-6-astra` version `2026-09-03` and `claude-opus-5-5` version `2` (Hosted on Azure).
+`gpt-6.1-sol` version `2026-09-29` and `claude-sonnet-5-5` version `2` (Hosted on Azure).
 Both use `GlobalStandard`; choose `eastus2` or `swedencentral` for generally available defaults.
+Both default to capacity `10` (10,000 TPM). Sonnet also passed a smoke test at capacity `1`,
+but that allocation permits only one request per minute and is not the interactive-demo default.
 Use .NET SDK 10.0.402+ and azd 1.37.1+. The application requests low reasoning effort through the
 same MEAI options for both vendors; Anthropic 13 uses adaptive thinking for that setting.
 
@@ -206,6 +208,7 @@ Change models through azd environment values, then re-run preview and provision:
 ```powershell
 azd env set CLAUDE_MODEL_NAME claude-sonnet-5-5
 azd env set CLAUDE_MODEL_VERSION 2
+azd env set CLAUDE_MODEL_CAPACITY 10
 azd env set AOAI_MODEL_NAME gpt-6.1-sol
 azd env set AOAI_MODEL_VERSION 2026-09-29
 azd provision --preview --no-prompt

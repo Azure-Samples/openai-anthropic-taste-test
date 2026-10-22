@@ -12,19 +12,19 @@
       "value": "${AZURE_PRINCIPAL_ID=}"
     },
     "claudeModelName": {
-      "value": "${CLAUDE_MODEL_NAME=claude-opus-5-5}"
+      "value": "${CLAUDE_MODEL_NAME=claude-sonnet-5-5}"
     },
     "claudeModelVersion": {
       "value": "${CLAUDE_MODEL_VERSION=2}"
     },
     "claudeModelCapacity": {
-      "value": "${CLAUDE_MODEL_CAPACITY=25}"
+      "value": "${CLAUDE_MODEL_CAPACITY=10}"
     },
     "aoaiModelName": {
-      "value": "${AOAI_MODEL_NAME=gpt-6-astra}"
+      "value": "${AOAI_MODEL_NAME=gpt-6.1-sol}"
     },
     "aoaiModelVersion": {
-      "value": "${AOAI_MODEL_VERSION=2026-09-03}"
+      "value": "${AOAI_MODEL_VERSION=2026-09-29}"
     },
     "aoaiModelCapacity": {
       "value": "${AOAI_MODEL_CAPACITY=10}"

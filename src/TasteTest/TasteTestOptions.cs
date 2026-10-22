@@ -25,9 +25,9 @@ public sealed class TasteTestOptions
     /// <summary>Foundry account subdomain. Derived from <see cref="FoundryEndpoint"/> when omitted.</summary>
     public string FoundryResourceName { get; set; } = string.Empty;
 
-    public string AoaiDeploymentName { get; set; } = "gpt-6-astra";
+    public string AoaiDeploymentName { get; set; } = "gpt-6.1-sol";
 
-    public string ClaudeDeploymentName { get; set; } = "claude-opus-5-5";
+    public string ClaudeDeploymentName { get; set; } = "claude-sonnet-5-5";
 
     // Reasoning tokens share this budget with visible output on the default models.
     public int MaxOutputTokens { get; set; } = 4_096;

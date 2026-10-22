@@ -5,7 +5,7 @@ targetScope = 'subscription'
 @maxLength(40)
 param environmentName string
 
-@description('Azure region where both default flagship models are generally available.')
+@description('Azure region where both default models are generally available.')
 @allowed([
   'eastus2'
   'swedencentral'
@@ -21,20 +21,20 @@ param location string
 param principalId string = ''
 
 @description('Anthropic model ID.')
-param claudeModelName string = 'claude-opus-5-5'
+param claudeModelName string = 'claude-sonnet-5-5'
 
 @description('Anthropic model version. Version 2 is Hosted on Azure.')
 param claudeModelVersion string = '2'
 
 @description('Anthropic deployment capacity in thousands of tokens per minute.')
 @minValue(1)
-param claudeModelCapacity int = 25
+param claudeModelCapacity int = 10
 
 @description('OpenAI model ID.')
-param aoaiModelName string = 'gpt-6-astra'
+param aoaiModelName string = 'gpt-6.1-sol'
 
 @description('OpenAI model version.')
-param aoaiModelVersion string = '2026-09-03'
+param aoaiModelVersion string = '2026-09-29'
 
 @description('OpenAI deployment capacity in thousands of tokens per minute.')
 @minValue(1)

@@ -8,7 +8,7 @@ Ask GPT and Claude the same question. Read both answers without knowing which is
 
 Underneath, it is one .NET interface — `IChatClient` — talking to two different vendor SDKs over two different wire protocols, both running on Microsoft Foundry.
 
-[![One IChatClient fans out to the OpenAI SDK for .NET over the Responses API and the Anthropic C# SDK over the Messages API, reaching gpt-6-astra and claude-opus-5-5 on Microsoft Foundry. Get the sample at aka.ms/meai/start.](docs/img/architecture.png)](https://aka.ms/meai/start)
+[![One IChatClient fans out to the OpenAI SDK for .NET over the Responses API and the Anthropic C# SDK over the Messages API, reaching gpt-6.1-sol and claude-sonnet-5-5 on Microsoft Foundry. Get the sample at aka.ms/meai/start.](docs/img/architecture.png)](https://aka.ms/meai/start)
 
 ## What you'll see
 
@@ -52,7 +52,7 @@ azd up
 | Model quota | Enough capacity for one GPT and one Claude deployment |
 | Tools | [.NET SDK 10.0.402+](https://dotnet.microsoft.com/download/dotnet/10.0) and [Azure Developer CLI 1.37.1+](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd) |
 
-Choose **eastus2** or **swedencentral**. Both default models are generally available there. GPT-6 Astra is still preview in westus2, so this template no longer offers that region.
+Choose **eastus2** or **swedencentral**. Both default models are generally available there; the pair was provisioned and tested in **eastus2**.
 
 Not every subscription can deploy Claude. CSP, free-trial, student, and some sponsored subscriptions are not eligible. See [Deploy and use Claude models in Microsoft Foundry](https://learn.microsoft.com/azure/foundry/foundry-models/how-to/use-foundry-models-claude).
 
@@ -184,7 +184,7 @@ var responses = await Task.WhenAll(lanes.Select(async lane =>
 
 The OpenAI construction includes a small [completion adapter](src/TasteTest/Services/OpenAIStreamCompletionClient.cs): MEAI.OpenAI 10.11.0 still forwards `response.incomplete` without its finish reason or usage. The adapter uses the SDK's native response conversion to preserve both, without duplicating streamed text. The shared application loop stays provider-neutral.
 
-Both lanes request low reasoning effort for short, responsive comparisons. Anthropic 13 maps this shared option to adaptive thinking and `output_config.effort`, not the legacy `budget_tokens` setting that current Claude models reject. The models are the flagship defaults; this sample is not a maximum-effort benchmark.
+Both lanes request low reasoning effort for short, responsive comparisons. Anthropic 13 maps this shared option to adaptive thinking and `output_config.effort`, rather than a fixed reasoning-token budget. This sample is not a maximum-effort benchmark.
 
 Swapping either lane for a different model is a configuration change, not a rewrite.
 
@@ -206,8 +206,8 @@ Being precise so nothing here is oversold:
 | Resource | Why |
 |---|---|
 | Microsoft Foundry account and project | One endpoint for both model families |
-| `gpt-6-astra` deployment | The OpenAI Responses lane |
-| `claude-opus-5-5` (version 2, Hosted on Azure) | The Anthropic Messages lane |
+| `gpt-6.1-sol` deployment | The OpenAI Responses lane |
+| `claude-sonnet-5-5` (version 2, Hosted on Azure) | The Anthropic Messages lane |
 | Azure Container App | Runs the Blazor Server app |
 | User-assigned managed identity | Lets the app reach Foundry without secrets |
 | Azure Container Registry | Stores the image built by `azd deploy` |
@@ -234,19 +234,23 @@ Before a demo, run a real comparison, vote, and ask a follow-up. The no-Azure pr
 <details>
 <summary><b>Use different models</b></summary>
 
-Defaults verified against the Azure model catalog on **October 21, 2026**:
+Default models provisioned and verified with real Entra-authenticated API calls on **October 21, 2026**:
 
 | Setting | Default |
 |---|---|
-| `CLAUDE_MODEL_NAME` | `claude-opus-5-5` |
+| `CLAUDE_MODEL_NAME` | `claude-sonnet-5-5` |
 | `CLAUDE_MODEL_VERSION` | `2` (Hosted on Azure) |
-| `CLAUDE_MODEL_CAPACITY` | `25` |
-| `AOAI_MODEL_NAME` | `gpt-6-astra` |
-| `AOAI_MODEL_VERSION` | `2026-09-03` |
+| `CLAUDE_MODEL_CAPACITY` | `10` |
+| `AOAI_MODEL_NAME` | `gpt-6.1-sol` |
+| `AOAI_MODEL_VERSION` | `2026-09-29` |
 | `AOAI_MODEL_CAPACITY` | `10` |
 | `TASTE_TEST_MAX_OUTPUT_TOKENS` | `4096` |
 
-GPT-6 Astra is Azure OpenAI's highest-capability general-purpose model. Opus 5.5 is the highest-capability generally available Claude model Hosted on Azure. Newer or preview models are not automatically better defaults: GPT-6.1 Sol targets lower cost, while Claude Fable is currently preview and hosted on Anthropic infrastructure. See the [Azure model catalog](https://learn.microsoft.com/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure) and [Claude availability](https://learn.microsoft.com/azure/foundry/foundry-models/concepts/claude-models).
+GPT-6.1 Sol and Claude Sonnet 5.5 both completed provisioning and returned successful text responses through their native APIs. They are the tested defaults, not a claim that every subscription has access to every model.
+
+Capacity is in thousands of tokens per minute: `10` means **10,000 TPM** per deployment. Sonnet also passed at `1` (**1,000 TPM**), but that allocation allowed only **one request per minute**. Use it only for a minimal smoke test; the default leaves room for comparison and follow-up calls. Increase capacity for larger audiences.
+
+Other models remain configurable, but check availability, quota, and Marketplace eligibility before switching. See the [Azure model catalog](https://learn.microsoft.com/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure) and [Claude availability](https://learn.microsoft.com/azure/foundry/foundry-models/concepts/claude-models).
 
 The token budget covers reasoning as well as visible answers. If an existing environment still uses the old 900-token setting, update it and restart the local app:
 
@@ -256,20 +260,6 @@ azd env set TASTE_TEST_MAX_OUTPUT_TOKENS 4096
 
 For Azure hosting, preview and provision again to update the app setting.
 
-A faster, cheaper pair for rehearsals:
-
-```powershell
-azd env set CLAUDE_MODEL_NAME claude-sonnet-5-5
-azd env set CLAUDE_MODEL_VERSION 2
-azd env set AOAI_MODEL_NAME gpt-6.1-sol
-azd env set AOAI_MODEL_VERSION 2026-09-29
-azd provision --preview
-azd provision
-azd deploy
-```
-
-Check model versions, regions, and quota in the Foundry model catalog before changing these.
-
 </details>
 
 <details>
@@ -278,10 +268,12 @@ Check model versions, regions, and quota in the Foundry model catalog before cha
 Pulling the code does not change saved azd settings or existing Azure deployments. In an eastus2 or swedencentral environment, explicitly select the new models:
 
 ```powershell
-azd env set AOAI_MODEL_NAME gpt-6-astra
-azd env set AOAI_MODEL_VERSION 2026-09-03
-azd env set CLAUDE_MODEL_NAME claude-opus-5-5
+azd env set AOAI_MODEL_NAME gpt-6.1-sol
+azd env set AOAI_MODEL_VERSION 2026-09-29
+azd env set AOAI_MODEL_CAPACITY 10
+azd env set CLAUDE_MODEL_NAME claude-sonnet-5-5
 azd env set CLAUDE_MODEL_VERSION 2
+azd env set CLAUDE_MODEL_CAPACITY 10
 azd env set TASTE_TEST_MAX_OUTPUT_TOKENS 4096
 azd provision --preview
 azd provision
