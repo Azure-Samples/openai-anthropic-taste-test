@@ -15,6 +15,8 @@ public sealed class TasteTestTurn
 {
     private readonly StringBuilder _response = new();
     private readonly Lock _gate = new();
+    private int _catalogLookups;
+    private int _catalogLookupErrors;
 
     internal TasteTestTurn(string prompt) => Prompt = prompt;
 
@@ -43,6 +45,10 @@ public sealed class TasteTestTurn
     }
 
     public UsageDetails? Usage { get; internal set; }
+
+    public int CatalogLookups => Volatile.Read(ref _catalogLookups);
+
+    public int CatalogLookupErrors => Volatile.Read(ref _catalogLookupErrors);
 
     public ChatFinishReason? FinishReason { get; internal set; }
 
@@ -75,4 +81,8 @@ public sealed class TasteTestTurn
             _response.Append(text);
         }
     }
+
+    internal void RecordCatalogLookup() => Interlocked.Increment(ref _catalogLookups);
+
+    internal void RecordCatalogLookupError() => Interlocked.Increment(ref _catalogLookupErrors);
 }

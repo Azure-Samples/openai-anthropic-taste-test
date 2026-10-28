@@ -40,4 +40,9 @@ internal static partial class TasteTestLog
 
     [LoggerMessage(EventId = 1004, Level = LogLevel.Debug, Message = "Ignored a duplicate submit while a request was active.")]
     public static partial void DuplicateSubmit(ILogger logger);
+
+    [LoggerMessage(
+        EventId = 1005, Level = LogLevel.Warning,
+        Message = "Catalog lookup failed in lane {Lane} for provider {Provider}; the answer will not be committed.")]
+    public static partial void CatalogLookupFailed(ILogger logger, string lane, ProviderKind provider);
 }

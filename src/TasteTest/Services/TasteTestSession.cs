@@ -1,5 +1,6 @@
 using System.ClientModel;
 using System.Diagnostics;
+using System.Text.Json;
 using Anthropic.Exceptions;
 using Azure.Identity;
 using Microsoft.Extensions.AI;
@@ -201,6 +202,7 @@ public sealed class TasteTestSession
     {
         var updates = new List<ChatResponseUpdate>();
         var startedAt = Stopwatch.GetTimestamp();
+        var toolBoundary = false;
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(_options.RequestTimeoutSeconds));
         var requestToken = deadline.Token;
@@ -214,7 +216,22 @@ public sealed class TasteTestSession
             {
                 Instructions = _options.SystemPrompt,
                 MaxOutputTokens = _options.MaxOutputTokens,
-                Reasoning = new() { Effort = ReasoningEffort.Low }
+                Reasoning = new() { Effort = ReasoningEffort.Low },
+                Tools = [DemoSupportCatalog.CreateTool(async (result, token) =>
+                {
+                    token.ThrowIfCancellationRequested();
+                    if (result.Plan is not null)
+                    {
+                        turn.RecordCatalogLookup();
+                    }
+                    else
+                    {
+                        turn.RecordCatalogLookupError();
+                        Activity.Current?.SetStatus(ActivityStatusCode.Error, "Catalog lookup rejected.");
+                        TasteTestLog.CatalogLookupFailed(_logger, lane.Label, lane.Provider);
+                    }
+                    await notifyProgress(true).ConfigureAwait(false);
+                })]
             };
 
             // Neither the SDK nor a failed call can append an incomplete user turn to history.
@@ -230,12 +247,24 @@ public sealed class TasteTestSession
                 requestToken.ThrowIfCancellationRequested();
                 updates.Add(update);
 
-                if (turn.TimeToFirstToken is null && !string.IsNullOrEmpty(update.Text))
+                if (update.Role == ChatRole.Tool || update.Contents.Any(content => content is FunctionResultContent))
                 {
-                    turn.TimeToFirstToken = Stopwatch.GetElapsedTime(startedAt);
+                    toolBoundary = true;
                 }
 
-                turn.AppendResponse(update.Text);
+                if (update.Role != ChatRole.Tool && !string.IsNullOrEmpty(update.Text))
+                {
+                    if (turn.TimeToFirstToken is null)
+                    {
+                        turn.TimeToFirstToken = Stopwatch.GetElapsedTime(startedAt);
+                    }
+                    if (toolBoundary && turn.HasResponse)
+                    {
+                        turn.AppendResponse("\n\n");
+                    }
+                    toolBoundary = false;
+                    turn.AppendResponse(update.Text);
+                }
                 await notifyProgress(false);
             }
 
@@ -245,6 +274,17 @@ public sealed class TasteTestSession
             requestToken.ThrowIfCancellationRequested();
             turn.Usage = response.Usage;
             turn.FinishReason = response.FinishReason;
+            var toolError = response.Messages.SelectMany(message => message.Contents)
+                .OfType<FunctionResultContent>().FirstOrDefault(content => content.Exception is not null)?.Exception;
+            if (toolError is not null || turn.CatalogLookupErrors > 0)
+            {
+                if (toolError is not null)
+                {
+                    TasteTestLog.LaneFailed(_logger, toolError, lane.Label, lane.Provider);
+                }
+                turn.Error = "The catalog lookup did not complete. Retry this prompt.";
+                return null;
+            }
             if (_logger.IsEnabled(LogLevel.Information))
             {
                 TasteTestLog.StreamFinished(_logger, lane.Label, lane.Provider,
@@ -295,6 +335,8 @@ public sealed class TasteTestSession
             ClientResultException or
             AnthropicApiException or
             HttpRequestException or
+            JsonException or
+            ArgumentException or
             TimeoutException)
         {
             // Keep the other lane usable, and never surface provider detail to the browser because

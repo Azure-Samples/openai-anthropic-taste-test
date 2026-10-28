@@ -77,6 +77,7 @@
             <div class="section-heading">
                 <h2 id="seed-heading">Need a starting point?</h2>
             </div>
+            <p class="request-status">The support-plan question uses one shared, read-only catalog tool. Prices and support targets are fictional.</p>
             <div class="seed-grid">
                 @foreach (var seed in Session.SeedPrompts)
                 {
@@ -207,6 +208,11 @@
                                     @if (turn.Usage is { InputTokenCount: { } input })
                                     {
                                         <span><b>@input.ToString("N0")</b> input</span>
+                                    }
+                                    <span class="catalog-lookups"><b>@turn.CatalogLookups</b> catalog @(turn.CatalogLookups == 1 ? "lookup" : "lookups")</span>
+                                    @if (turn.CatalogLookupErrors > 0)
+                                    {
+                                        <span>@turn.CatalogLookupErrors catalog @(turn.CatalogLookupErrors == 1 ? "error" : "errors")</span>
                                     }
                                     @if (Session.UseSampleResponses)
                                     {

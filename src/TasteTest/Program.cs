@@ -17,6 +17,7 @@ builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 builder.Services.AddProblemDetails();
 builder.Services.AddHealthChecks();
+builder.Services.AddTasteTestTelemetry(builder.Configuration);
 
 // Streaming responses stay open far longer than the 100-second default, so the request's own
 // per-lane deadline and cancellation token bound each call instead of the client timeout.

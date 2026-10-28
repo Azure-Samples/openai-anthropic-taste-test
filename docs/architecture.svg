@@ -9,7 +9,8 @@
     gpt-6.1-sol deployment of Azure OpenAI in Microsoft Foundry. The Anthropic lane uses the
     Anthropic C# SDK, calling AnthropicFoundryClient(...).AsIChatClient() over the Messages API at
     the /anthropic route to a claude-sonnet-5-5 deployment of Claude in Microsoft Foundry. Both lanes
-    authenticate with Microsoft Entra ID and use no API keys.
+    authenticate with Microsoft Entra ID and use no API keys. Both invoke the same read-only
+    fictional support-plan catalog and share OpenTelemetry instrumentation.
     Get the sample at https://aka.ms/meai/start.
   </desc>
 
@@ -81,7 +82,7 @@
           fill="#FFFFFF" stroke="#D7E2ED" stroke-width="1.4" filter="url(#softShadow)"/>
     <use href="#logoDotnet" x="24" y="22" width="44" height="44"/>
     <text x="24" y="88" font-size="16" font-weight="700" fill="#0A2540">.NET 10 app</text>
-    <text x="24" y="108" font-size="12.5" fill="#8A97A5">Runtime 10.0.13</text>
+    <text x="24" y="108" font-size="12.5" fill="#8A97A5">Runtime 10.0.14</text>
   </g>
 
   <!-- MEAI, the centrepiece -->
@@ -100,8 +101,8 @@
 
     <line x1="40" y1="174" x2="280" y2="174" stroke="#D9CCFA" stroke-width="1.2"/>
 
-    <text x="160" y="201" text-anchor="middle" font-size="13.5" fill="#4A5A6A">One streaming loop, one history model,</text>
-    <text x="160" y="222" text-anchor="middle" font-size="13.5" fill="#4A5A6A">one options and usage shape.</text>
+    <text x="160" y="201" text-anchor="middle" font-size="13.5" fill="#4A5A6A">Shared read-only catalog tool.</text>
+    <text x="160" y="222" text-anchor="middle" font-size="13.5" fill="#4A5A6A">One streaming and telemetry pipeline.</text>
 
     <g transform="translate(30 244)">
       <rect x="0" y="0" width="260" height="32" rx="8" fill="#FFFFFF" stroke="#D9CCFA"/>
@@ -146,7 +147,7 @@
 
     <use href="#logoAnthropic" x="37" y="46" width="46" height="46"/>
     <text x="104" y="62" font-size="21" font-weight="700" fill="#0A2540">Anthropic C# SDK</text>
-    <text x="104" y="86" font-size="12" fill="#5A6B7C">Anthropic 13.1.0 &#183; Anthropic.Foundry 1.0.0</text>
+    <text x="104" y="86" font-size="12" fill="#5A6B7C">Anthropic 13.3.0 &#183; Anthropic.Foundry 1.0.0</text>
 
     <rect x="104" y="102" width="330" height="34" rx="8" fill="#0A2540"/>
     <text x="120" y="124" font-family="'Cascadia Code', Consolas, monospace" font-size="12.5" fill="#FBBF9C">AnthropicFoundryClient().AsIChatClient()</text>

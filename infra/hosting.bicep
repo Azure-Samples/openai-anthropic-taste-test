@@ -13,6 +13,8 @@ param foundryAccountName string
 param aoaiDeploymentName string
 param claudeDeploymentName string
 param maxOutputTokens int
+param telemetryConsole bool = false
+param otlpEndpoint string = ''
 
 @description('Minimum replicas. Use 1 for a warm demo or 0 to minimize idle cost.')
 @minValue(0)
@@ -168,6 +170,14 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'TASTE_TEST_MAX_OUTPUT_TOKENS'
               value: string(maxOutputTokens)
+            }
+            {
+              name: 'TASTE_TEST_TELEMETRY_CONSOLE'
+              value: string(telemetryConsole)
+            }
+            {
+              name: 'OTEL_EXPORTER_OTLP_ENDPOINT'
+              value: otlpEndpoint
             }
             {
               name: 'ASPNETCORE_URLS'

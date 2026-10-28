@@ -81,7 +81,7 @@ Use the model defaults in `infra/main.parameters.json` unless the customer asks 
 Both use `GlobalStandard`; choose `eastus2` or `swedencentral` for generally available defaults.
 Both default to capacity `10` (10,000 TPM). Sonnet also passed a smoke test at capacity `1`,
 but that allocation permits only one request per minute and is not the interactive-demo default.
-Use .NET SDK 10.0.402+ and azd 1.37.1+. The application requests low reasoning effort through the
+Use .NET SDK 10.0.403+ and azd 1.37.1+. The application requests low reasoning effort through the
 same MEAI options for both vendors; Anthropic 13 uses adaptive thinking for that setting.
 
 Check authentication:
@@ -181,6 +181,13 @@ verification below.
     and a double click does not queue a second comparison or leave a stale error.
 11. For live verification, require no preview banner, completed answers from both native SDKs,
     and an enabled vote. Canned preview responses are not evidence of working inference.
+12. Run the support-plan seed. Require actual catalog lookups in both lanes and correct fictional
+    prices ($40 Business, $75 Enterprise per seat/month). The 80-seat Enterprise total is $6,000.
+    Follow up with the winner to exercise completed tool history. Preview invokes the local tool
+    with a scripted model; do not describe that as a live SDK test.
+13. Enable `TASTE_TEST_TELEMETRY_CONSOLE=true` or set `OTEL_EXPORTER_OTLP_ENDPOINT` to a local
+    HTTP/protobuf collector. Verify model/tool spans and usage. Prompts, answers, and tool arguments
+    must not be captured. Keep telemetry private and off-screen until reveal.
 
 For a direct Claude smoke test, use the provisioned endpoint and deployment from
 `azd env get-values`. Acquire an Entra token for `https://ai.azure.com/.default`, POST a minimal

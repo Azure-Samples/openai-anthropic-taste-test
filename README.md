@@ -6,7 +6,7 @@
 
 Ask GPT and Claude the same question. Read both answers without knowing which is which. Vote. Then see who wrote what.
 
-Underneath, it is one .NET interface — `IChatClient` — talking to two different vendor SDKs over two different wire protocols, both running on Microsoft Foundry.
+Both use `IChatClient`, but each keeps its official SDK and native API. The support-plan example also runs the same C# business tool on both models. Shared OpenTelemetry instrumentation reports the model calls and tool execution.
 
 [![One IChatClient fans out to the OpenAI SDK for .NET over the Responses API and the Anthropic C# SDK over the Messages API, reaching gpt-6.1-sol and claude-sonnet-5-5 on Microsoft Foundry. Get the sample at aka.ms/meai/start.](docs/img/architecture.png)](https://aka.ms/meai/start)
 
@@ -16,13 +16,17 @@ Underneath, it is one .NET interface — `IChatClient` — talking to two differ
 2. **Stay blind.** The answers appear in two lanes named **A** and **B**. Nothing on the page says which model is which.
 3. **Vote, then reveal.** Pick the answer you like. Only then does the app show the provider, model, SDK, and protocol behind each lane.
 
+Try the **support-plan** prompt to see tool calling. Both models look up the same fictional Business and Enterprise plans, then recommend one for 80 seats. Each answer shows how many catalog lookups actually ran. The catalog is read-only and contains no customer data.
+
 Live answers show time to first visible text, total time, and API-reported token counts through the same .NET types. Output token counts can include reasoning, not just the words on screen. Preview token counts are estimates.
 
-![Two blind response lanes showing the same prompt, different answers, and per-answer latency and token metrics](docs/img/taste-test.png)
+On tool turns, the first visible text may be a short preamble before the lookup. Use total time to compare time to a completed recommendation.
+
+![Preview of a support-plan comparison with blind response lanes, catalog lookup counts, latency, and estimated token metrics](docs/img/taste-test.png)
 
 ## Try it now, no Azure needed
 
-You only need the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0), version **10.0.402 or later**.
+You only need the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0), version **10.0.403 or later**.
 
 ```powershell
 git clone https://github.com/Azure-Samples/openai-anthropic-taste-test
@@ -30,7 +34,7 @@ cd openai-anthropic-taste-test
 dotnet run --project src/TasteTest --launch-profile sample
 ```
 
-Open **http://localhost:5050**. This runs the real UI with canned answers, so you can see the whole flow before spending anything. The page tells you it is a preview.
+Open **http://localhost:5050**. Preview mode uses canned answers and estimated token counts. Its support-plan example exercises the local catalog tool through MEAI, but it does not call either vendor's API.
 
 ## Deploy the real thing
 
@@ -50,7 +54,7 @@ azd up
 | An Azure subscription | Must be allowed to buy Anthropic models from Azure Marketplace |
 | Permission to create resources | `Owner`, or `Contributor` + `Role Based Access Control Administrator` |
 | Model quota | Enough capacity for one GPT and one Claude deployment |
-| Tools | [.NET SDK 10.0.402+](https://dotnet.microsoft.com/download/dotnet/10.0) and [Azure Developer CLI 1.37.1+](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd) |
+| Tools | [.NET SDK 10.0.403+](https://dotnet.microsoft.com/download/dotnet/10.0) and [Azure Developer CLI 1.37.1+](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd) |
 
 Choose **eastus2** or **swedencentral**. Both default models are generally available there; the pair was provisioned and tested in **eastus2**.
 
@@ -130,7 +134,7 @@ This is the part worth reading. Two vendors, two protocols, one application loop
 | GPT | OpenAI SDK for .NET | `/openai/v1` | Responses API |
 | Claude | Anthropic C# SDK | `/anthropic` | Messages API |
 
-Each SDK is constructed its own way, using its own auth style. Both end as the same type:
+Each SDK has its own client construction. Both become an `IChatClient`, with the same tool-calling and telemetry middleware. This is a shortened version; the [factory](src/TasteTest/Services/FoundryModelChatClientFactory.cs) also configures stateless Responses calls and incomplete-stream handling:
 
 ```csharp
 var credential = new DefaultAzureCredential();
@@ -141,14 +145,18 @@ IChatClient gpt = new OpenAIClient(
     .GetResponsesClient()
     .AsIChatClient(aoaiDeployment)
     .AsBuilder()
-    .UseFunctionInvocation()
+    .UseFunctionInvocation(configure: client => client.MaximumIterationsPerRequest = 4)
+    .UseOpenTelemetry(sourceName: "TasteTest.Chat",
+        configure: telemetry => telemetry.EnableSensitiveData = false)
     .Build();
 
 IChatClient claude = new AnthropicFoundryClient(
         new AnthropicFoundryIdentityTokenCredentials(credential, resourceName))
     .AsIChatClient(claudeDeployment)
     .AsBuilder()
-    .UseFunctionInvocation()
+    .UseFunctionInvocation(configure: client => client.MaximumIterationsPerRequest = 4)
+    .UseOpenTelemetry(sourceName: "TasteTest.Chat",
+        configure: telemetry => telemetry.EnableSensitiveData = false)
     .Build();
 ```
 
@@ -167,7 +175,8 @@ var responses = await Task.WhenAll(lanes.Select(async lane =>
         new ChatOptions
         {
             MaxOutputTokens = 4096,
-            Reasoning = new() { Effort = ReasoningEffort.Low }
+            Reasoning = new() { Effort = ReasoningEffort.Low },
+            Tools = [DemoSupportCatalog.CreateTool(onLookup)]
         },
         cancellationToken))
     {
@@ -180,22 +189,59 @@ var responses = await Task.WhenAll(lanes.Select(async lane =>
 }));
 ```
 
+Here, `onLookup` is the per-turn callback that records catalog results for the page. The full implementation is in the [session](src/TasteTest/Services/TasteTestSession.cs).
+
 `ToChatResponse()` also folds each provider's usage reporting into one `UsageDetails`, which is why the page can show token counts for both lanes without any provider-specific code.
 
-The OpenAI construction includes a small [completion adapter](src/TasteTest/Services/OpenAIStreamCompletionClient.cs): MEAI.OpenAI 10.11.0 still forwards `response.incomplete` without its finish reason or usage. The adapter uses the SDK's native response conversion to preserve both, without duplicating streamed text. The shared application loop stays provider-neutral.
+The [completion adapter](src/TasteTest/Services/OpenAIStreamCompletionClient.cs) preserves finish reason and usage on incomplete OpenAI streams, which MEAI.OpenAI 10.11.0 does not yet convert. OpenAI calls use `store: false` and request encrypted reasoning content, so tool iterations can replay context without relying on a previously stored response ID.
 
 Both lanes request low reasoning effort for short, responsive comparisons. Anthropic 13 maps this shared option to adaptive thinking and `output_config.effort`, rather than a fixed reasoning-token budget. This sample is not a maximum-effort benchmark.
 
 Swapping either lane for a different model is a configuration change, not a rewrite.
+
+### Shared business tool
+
+The [demo catalog](src/TasteTest/Services/DemoSupportCatalog.cs) is a regular C# function exposed with `AIFunctionFactory.Create`. MEAI invokes it and sends the result back through the appropriate SDK. There is no separate OpenAI or Anthropic implementation of the lookup.
+
+| Fictional plan | USD per seat/month | First-response target | Coverage |
+|---|---|---|---|
+| Business | $40 | 4 hours | 24/7 |
+| Enterprise | $75 | 1 hour | 24/7 |
+
+For 80 seats and a two-hour response requirement, Enterprise meets the target at $6,000/month. These are demo values, not commercial prices or guarantees. Tool execution is bounded to four iterations, followed by a final model call without tools. Usage includes all model calls in that answer.
+
+A rejected lookup or tool error fails the turn. That answer cannot win a vote or enter completed conversation history.
+
+### See the traces and metrics
+
+To print telemetry locally:
+
+```powershell
+$env:TASTE_TEST_TELEMETRY_CONSOLE = 'true'
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\scripts\run-local.ps1
+```
+
+Or send it to an **OTLP HTTP/protobuf** collector:
+
+```powershell
+$env:OTEL_EXPORTER_OTLP_ENDPOINT = 'http://localhost:4318'
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\scripts\run-local.ps1
+```
+
+Start your collector first. In VS Code with Foundry Toolkit, run **Foundry Toolkit: Open Tracing** (`ai-mlstudio.tracing.open`). A standard OTLP collector works too. Keep tracing views off-screen until after the vote because model names appear in telemetry.
+
+The [telemetry setup](src/TasteTest/Services/TasteTestTelemetry.cs) registers `TasteTest.Chat` as both an activity source and a meter. MEAI records model-call and tool spans, token usage, duration, and streaming timing. SDK time-to-first-chunk is different from the page's time-to-first-visible-text measurement.
+
+Prompt, answer, and tool-argument capture is explicitly disabled. No exporter is enabled unless you set one of the variables above. For Azure hosting, set those values with `azd env set`, run `azd provision --preview`, then `azd up` to reapply settings and deploy the app. Use a collector reachable from the Container App, not your laptop's localhost. Console output goes to the existing application logs. No new Azure monitoring resource is required.
 
 <details>
 <summary><b>What this sample does not do</b></summary>
 
 Being precise so nothing here is oversold:
 
-- `UseFunctionInvocation()` installs MEAI's tool-calling middleware, but this sample registers **no tools**, so no tool call is executed.
+- The only tool is the fictional read-only support catalog. There are no write actions, production business-system connections, or tool approvals.
 - It does not request structured output.
-- It does not reuse provider-side conversation IDs. Every turn replays the full completed history to both lanes.
+- It does not reuse provider-side conversation IDs or cache model answers. Completed history, including tool calls and results, is replayed.
 - Canceled, failed, truncated, and empty answers cannot win a vote. Voting stays disabled with an explanation until both answers complete. **Retry comparison** resends the last prompt to both lanes. Earlier attempts remain visible but are excluded from future context.
 - Each lane has a 120-second deadline. Cancel stops both lanes; neither an abandoned comparison nor a failed follow-up changes completed conversation history.
 
@@ -258,7 +304,7 @@ The token budget covers reasoning as well as visible answers. If an existing env
 azd env set TASTE_TEST_MAX_OUTPUT_TOKENS 4096
 ```
 
-For Azure hosting, preview and provision again to update the app setting.
+For Azure hosting, run `azd provision --preview`, then `azd up` to update the setting and deploy the app.
 
 </details>
 
@@ -312,24 +358,25 @@ azd provision
 <details>
 <summary><b>Runtime and dependency versions</b></summary>
 
-Stable releases checked on **October 21, 2026**:
+Stable releases checked on **October 28, 2026**:
 
 | Dependency | Version |
 |---|---|
-| .NET SDK / ASP.NET Core runtime | `10.0.402` / `10.0.13` |
+| .NET SDK / ASP.NET Core runtime | `10.0.403` / `10.0.14` |
 | Microsoft.Extensions.AI / Microsoft.Extensions.AI.OpenAI | `10.11.0` |
 | OpenAI | `2.14.0` |
-| Anthropic / Anthropic.Foundry | `13.1.0` / `1.0.0` |
+| Anthropic / Anthropic.Foundry | `13.3.0` / `1.0.0` |
 | Azure.Identity | `1.21.0` |
-| Azure.Core / System.ClientModel | `1.63.0` / `1.16.0` |
-| Markdig | `1.4.2` |
+| Azure.Core / System.ClientModel | `1.64.0` / `1.16.0` |
+| Markdig | `1.5.1` |
+| OpenTelemetry hosting / console / OTLP exporters | `1.20.1` |
 | Azure Developer CLI / Azure CLI / Bicep (devcontainer) | `1.37.1` / `2.91.0` / `0.48.1` |
 
-.NET 10 is the latest stable LTS; .NET 11 is still a release candidate. CI reads the SDK version from [global.json](global.json), and Docker pins the matching SDK and runtime releases. The devcontainer uses the current .NET 10 Ubuntu Noble image.
+.NET 10 is the latest stable LTS; .NET 11 is still a release candidate. This update includes the 10.0.14 security servicing release. CI reads [global.json](global.json), Docker pins matching SDK/runtime releases, and the devcontainer uses the .NET 10 Ubuntu Noble image.
 
 MEAI.OpenAI 10.11.0 supports OpenAI 2.14.0, so the old OpenAI Dependabot exclusion has been removed. Credential, transport, and test dependencies are also pinned to current stable releases rather than older transitive minimums. Dependabot checks container images and devcontainer dependencies as well as NuGet and SHA-pinned GitHub Actions. CI builds the container in addition to building and testing the application.
 
-If your package mirror lags, use NuGet.org or ask the mirror owner to sync these versions. Anthropic 13.1.0 and Foundry 1.0.0 were released on the verification date.
+If your package mirror lags, use NuGet.org or ask the mirror owner to sync these versions.
 
 </details>
 
@@ -363,7 +410,7 @@ dotnet test OpenAIAnthropicTasteTest.slnx
 azd provision --preview
 ```
 
-The tests cover concurrent streaming, blocking SDK startup, usage and latency, guarded voting, winner-only continuation, cancellation, timeouts, retry isolation, truncated/empty streams, and safe Markdown. Transport tests exercise the actual SDKs with native JSON and server-sent events, without calling Azure.
+The tests cover streaming, cancellation, retries, safe Markdown, catalog lookup, and telemetry privacy. Transport tests drive the actual SDKs through native tool-call streams and verify the tool-result follow-up requests without calling Azure.
 
 ## Learn more
 

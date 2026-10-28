@@ -20,6 +20,8 @@ param claudeOrganizationName string
 param claudeCountryCode string
 param claudeIndustry string
 param maxOutputTokens int
+param telemetryConsole bool = false
+param otlpEndpoint string = ''
 param containerMinReplicas int
 
 @description('Provisions Container Apps hosting, its registry, identity, and role assignments.')
@@ -122,6 +124,8 @@ module hosting 'hosting.bicep' = if (deployApplicationHost) {
     aoaiDeploymentName: aoaiDeployment.name
     claudeDeploymentName: claudeDeployment.name
     maxOutputTokens: maxOutputTokens
+    telemetryConsole: telemetryConsole
+    otlpEndpoint: otlpEndpoint
     containerMinReplicas: containerMinReplicas
   }
 }

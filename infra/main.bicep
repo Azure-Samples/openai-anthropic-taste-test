@@ -68,6 +68,12 @@ param claudeIndustry string = 'technology'
 @maxValue(16384)
 param maxOutputTokens int = 4096
 
+@description('Export model/tool telemetry to application console logs. Prompts, answers and tool arguments are excluded.')
+param telemetryConsole bool = false
+
+@description('Optional OTLP HTTP/protobuf collector base URL. Leave empty to disable OTLP export.')
+param otlpEndpoint string = ''
+
 @description('Minimum Container Apps replicas. Use 1 for a warm demo or 0 to minimize idle cost.')
 @minValue(0)
 @maxValue(1)
@@ -124,6 +130,8 @@ module application 'resources.bicep' = {
     claudeCountryCode: claudeCountryCode
     claudeIndustry: claudeIndustry
     maxOutputTokens: maxOutputTokens
+    telemetryConsole: telemetryConsole
+    otlpEndpoint: otlpEndpoint
     containerMinReplicas: containerMinReplicas
     deployApplicationHost: deployApplicationHost
     assignInferenceRoleToDeployer: assignInferenceRoleToDeployer

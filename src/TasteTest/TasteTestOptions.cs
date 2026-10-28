@@ -42,14 +42,16 @@ public sealed class TasteTestOptions
     public string SystemPrompt { get; set; } =
         "Answer directly and thoughtfully. Prefer a clear structure and concrete examples. " +
         "Keep answers under 180 words unless the user asks for more detail. " +
-        "Do not discuss your identity or provider.";
+        "Do not discuss your identity or provider. " +
+        "For demo support-plan facts or prices, use lookup_support_plan and do not invent missing catalog facts. " +
+        "Catalog entries are fictional demo data, not commercial offers.";
 
     public IReadOnlyList<string> SeedPrompts { get; set; } =
     [
         "Explain eventual consistency to a product manager using one vivid analogy, then name where the analogy breaks.",
         "A team can ship a risky feature Friday or delay until Monday. Give the strongest case for each choice, then make the call.",
         "Rewrite this principle so it is memorable but not glib: reliability is a product feature, not an operations afterthought.",
-        "Design a two-minute exercise that teaches senior engineers why good API naming matters."
+        "Use the demo catalog to choose a support plan for 80 seats. We need 24/7 coverage and a response within two hours. Compare Business and Enterprise, including monthly cost."
     ];
 
     /// <summary>Binds the options section and applies the flat variables written by <c>azd</c>.</summary>

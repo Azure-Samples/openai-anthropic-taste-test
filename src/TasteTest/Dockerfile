@@ -1,8 +1,8 @@
-FROM mcr.microsoft.com/dotnet/aspnet:10.0.13 AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:10.0.14 AS runtime
 WORKDIR /app
 EXPOSE 8080
 
-FROM mcr.microsoft.com/dotnet/sdk:10.0.402 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0.403 AS build
 WORKDIR /src
 COPY TasteTest.csproj .
 RUN dotnet restore TasteTest.csproj

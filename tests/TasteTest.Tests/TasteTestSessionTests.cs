@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -8,6 +9,85 @@ namespace TasteTest.Tests;
 
 public sealed class TasteTestSessionTests
 {
+    [Fact]
+    public async Task SendAsync_TracksActualCatalogLookupsPerLaneAndTurn()
+    {
+        using var factory = new TrackingClientFactory();
+        factory.OpenAI.InvokeCatalog = true;
+        var session = CreateSession(factory);
+
+        await session.SendAsync("Compare support plans.", _ => Task.CompletedTask);
+        factory.OpenAI.InvokeCatalog = false;
+        await session.SendAsync("A separate question.", _ => Task.CompletedTask);
+
+        Assert.Equal(1, session.Lanes[0].Turns[0].CatalogLookups);
+        Assert.Equal(0, session.Lanes[1].Turns[0].CatalogLookups);
+        Assert.All(session.Lanes, lane => Assert.Equal(0, lane.LatestTurn!.CatalogLookups));
+        Assert.True(session.CanPick);
+    }
+
+    [Fact]
+    public async Task SendAsync_CatalogRejectionsCannotWinOrEnterHistory()
+    {
+        using var factory = new TrackingClientFactory();
+        factory.OpenAI.InvokeCatalog = true;
+        factory.OpenAI.CatalogPlan = "Premium";
+        var session = CreateSession(factory);
+
+        await session.SendAsync("Compare support plans.", _ => Task.CompletedTask);
+
+        Assert.Equal(0, session.Lanes[0].LatestTurn!.CatalogLookups);
+        Assert.Equal(1, session.Lanes[0].LatestTurn!.CatalogLookupErrors);
+        Assert.Equal("The catalog lookup did not complete. Retry this prompt.", session.Lanes[0].Error);
+        Assert.False(session.CanPick);
+        Assert.True(session.CanRetry);
+        Assert.All(session.Lanes, lane => Assert.False(lane.LatestTurn!.IncludedInHistory));
+    }
+
+    [Fact]
+    public async Task SendAsync_ToolExceptionsCannotBecomeCompletedAnswers()
+    {
+        using var factory = new TrackingClientFactory();
+        factory.OpenAI.ToolResultError = new InvalidOperationException("private tool failure");
+        var session = CreateSession(factory);
+
+        await session.SendAsync("Compare support plans.", _ => Task.CompletedTask);
+
+        Assert.NotNull(session.Lanes[0].Error);
+        Assert.False(session.Lanes[0].LatestTurn!.IsComplete);
+        Assert.False(session.CanPick);
+    }
+
+    [Fact]
+    public async Task SendAsync_SeparatesToolPreamblesFromTheFinalMarkdownAnswer()
+    {
+        using var factory = new TrackingClientFactory();
+        factory.OpenAI.InvokeCatalog = true;
+        factory.OpenAI.ToolPreamble = "I'll check the catalog.";
+        factory.OpenAI.ResponseText = "## Choose Enterprise\n\nIt meets the target.";
+        var session = CreateSession(factory);
+
+        await session.SendAsync("Compare support plans.", _ => Task.CompletedTask);
+
+        Assert.Equal("I'll check the catalog.\n\n## Choose Enterprise\n\nIt meets the target.",
+            session.Lanes[0].LatestTurn!.Response);
+        Assert.True(session.CanPick);
+    }
+
+    [Fact]
+    public async Task SendAsync_MalformedToolArgumentsFailALaneWithoutEscapingTheCircuit()
+    {
+        using var factory = new TrackingClientFactory();
+        factory.OpenAI.FailWith(new JsonException("malformed generated tool arguments"));
+        var session = CreateSession(factory);
+
+        await session.SendAsync("Compare support plans.", _ => Task.CompletedTask);
+
+        Assert.True(session.Lanes[0].HasError);
+        Assert.False(session.IsBusy);
+        Assert.False(session.CanPick);
+    }
+
     [Fact]
     public async Task SendAsync_StreamsBothLanesConcurrentlyAndCapturesUsage()
     {
@@ -545,6 +625,14 @@ public sealed class TasteTestSessionTests
 
         public string ResponseText { get; set; } = responseText;
 
+        public bool InvokeCatalog { get; set; }
+
+        public string CatalogPlan { get; set; } = "Business";
+
+        public string? ToolPreamble { get; set; }
+
+        public Exception? ToolResultError { get; set; }
+
         public Func<CancellationToken, Task>? AfterText { get; set; }
 
         public Action? BeforeText { get; set; }
@@ -579,6 +667,22 @@ public sealed class TasteTestSessionTests
             if (_failure is not null)
             {
                 throw _failure;
+            }
+
+            if (InvokeCatalog)
+            {
+                if (ToolPreamble is not null)
+                {
+                    yield return new ChatResponseUpdate(ChatRole.Assistant, ToolPreamble);
+                }
+                var tool = Assert.IsAssignableFrom<AIFunction>(Assert.Single(options!.Tools!));
+                var result = await tool.InvokeAsync(new AIFunctionArguments { ["plan"] = CatalogPlan }, cancellationToken);
+                yield return new ChatResponseUpdate(ChatRole.Tool, [new FunctionResultContent("catalog_call", result)]);
+            }
+            if (ToolResultError is not null)
+            {
+                yield return new ChatResponseUpdate(ChatRole.Tool,
+                    [new FunctionResultContent("failed_call", null) { Exception = ToolResultError }]);
             }
 
             BeforeText?.Invoke();
