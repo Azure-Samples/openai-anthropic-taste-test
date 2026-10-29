@@ -28,6 +28,7 @@ var managedIdentityName = 'id-taste-${suffix}'
 var logAnalyticsName = 'log-taste-${suffix}'
 var cognitiveServicesUserRoleId = 'a97b65f3-24c7-4388-baec-2e87135dc908'
 var acrPullRoleId = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
+var federationSettingName = 'override-use-mi-fic-assertion-client-id'
 
 resource foundry 'Microsoft.CognitiveServices/accounts@2025-10-01-preview' existing = {
   name: foundryAccountName
@@ -139,6 +140,13 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
           server: containerRegistry.properties.loginServer
         }
       ]
+      secrets: [
+        {
+          // Container Apps uses this managed identity for the Entra client assertion, not a secret.
+          name: federationSettingName
+          value: appIdentity.properties.clientId
+        }
+      ]
     }
     template: {
       containers: [
@@ -150,6 +158,10 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'AZURE_CLIENT_ID'
               value: appIdentity.properties.clientId
+            }
+            {
+              name: 'AZURE_TOKEN_CREDENTIALS'
+              value: 'ManagedIdentityCredential'
             }
             {
               name: 'AZURE_FOUNDRY_ENDPOINT'
@@ -225,9 +237,60 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   ]
 }
 
+module webAuthentication 'web-auth.bicep' = {
+  params: {
+    applicationName: 'taste-test-${suffix}'
+    applicationUrl: 'https://${containerApp.properties.configuration.ingress.fqdn}'
+    identityPrincipalId: appIdentity.properties.principalId
+  }
+}
+
+resource authentication 'Microsoft.App/containerApps/authConfigs@2026-07-01' = {
+  parent: containerApp
+  name: 'current'
+  properties: {
+    platform: {
+      enabled: true
+    }
+    globalValidation: {
+      unauthenticatedClientAction: 'RedirectToLoginPage'
+      redirectToProvider: 'azureactivedirectory'
+      excludedPaths: [
+        '/health'
+      ]
+    }
+    identityProviders: {
+      azureActiveDirectory: {
+        enabled: true
+        registration: {
+          clientId: webAuthentication.outputs.clientId
+          clientSecretSettingName: federationSettingName
+          openIdIssuer: webAuthentication.outputs.openIdIssuer
+        }
+        login: {
+          loginParameters: [
+            'scope=openid profile'
+          ]
+        }
+        validation: {
+          allowedAudiences: [
+            webAuthentication.outputs.clientId
+          ]
+        }
+      }
+    }
+    login: {
+      tokenStore: {
+        enabled: false
+      }
+    }
+  }
+}
+
 output containerEnvironmentName string = containerEnvironment.name
 output containerRegistryEndpoint string = containerRegistry.properties.loginServer
 output containerRegistryName string = containerRegistry.name
 output identityPrincipalId string = appIdentity.properties.principalId
 output containerAppName string = containerApp.name
 output containerAppUri string = 'https://${containerApp.properties.configuration.ingress.fqdn}'
+output webAuthClientId string = webAuthentication.outputs.clientId

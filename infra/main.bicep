@@ -153,3 +153,4 @@ output SERVICE_WEB_IDENTITY_PRINCIPAL_ID string = application.outputs.identityPr
 output SERVICE_WEB_IMAGE_NAME string = application.outputs.imageName
 output SERVICE_WEB_NAME string = application.outputs.containerAppName
 output SERVICE_WEB_URI string = application.outputs.containerAppUri
+output WEB_AUTH_CLIENT_ID string = application.outputs.webAuthClientId

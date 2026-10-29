@@ -16,6 +16,10 @@ $variableNames = @(
     'TASTE_TEST_USE_SAMPLE_RESPONSES'
 )
 $previousValues = @{}
+$telemetryOverrides = @(
+    'TASTE_TEST_TELEMETRY_CONSOLE',
+    'OTEL_EXPORTER_OTLP_ENDPOINT'
+) | Where-Object { Test-Path "Env:$_" }
 foreach ($name in $variableNames) {
     $previousValues[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
@@ -29,7 +33,8 @@ try {
 
     foreach ($line in $values) {
         if ($line -match '^([A-Za-z_][A-Za-z0-9_]*)="(.*)"$' -and
-            $variableNames -contains $Matches[1]) {
+            $variableNames -contains $Matches[1] -and
+            $telemetryOverrides -notcontains $Matches[1]) {
             [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2], 'Process')
         }
     }
@@ -40,7 +45,12 @@ try {
 }
 finally {
     foreach ($name in $variableNames) {
-        [Environment]::SetEnvironmentVariable($name, $previousValues[$name], 'Process')
+        if ($null -eq $previousValues[$name]) {
+            if (Test-Path "Env:$name") { Remove-Item "Env:$name" }
+        }
+        else {
+            [Environment]::SetEnvironmentVariable($name, $previousValues[$name], 'Process')
+        }
     }
 
     Pop-Location

@@ -19,6 +19,24 @@ This project follows the [Microsoft Open Source Code of Conduct](https://opensou
 
 6. For UI changes, use sample mode and inspect the pre-reveal DOM for provider or model identity leaks.
 
+For launcher changes, run the mocked PowerShell and Bash regression checks with PowerShell 7
+and Bash (Git Bash on Windows):
+
+```powershell
+pwsh -NoProfile -File .\tests\Scripts\RunLocal.Tests.ps1
+```
+
+For infrastructure changes, compile and test the authentication policy without deploying:
+
+```powershell
+az bicep build --file .\infra\main.bicep --outfile "$env:TEMP\taste-test-arm.json"
+pwsh -NoProfile -File .\tests\Scripts\Infrastructure.Tests.ps1 -TemplatePath "$env:TEMP\taste-test-arm.json"
+```
+
+Use Bicep 0.48.1 or later. CI runs both checks. The hosting test verifies required Entra
+sign-in, the single-tenant issuer and audience, the health-probe exception, and managed-identity
+federation without client secrets. It does not replace testing browser sign-in after deployment.
+
 ## Local sample mode
 
 ```powershell

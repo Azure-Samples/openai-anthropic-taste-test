@@ -25,5 +25,15 @@ jobs:
         run: dotnet build OpenAIAnthropicTasteTest.slnx --configuration Release --no-restore
       - name: Test
         run: dotnet test OpenAIAnthropicTasteTest.slnx --configuration Release --no-build
+      - name: Test local launchers
+        shell: pwsh
+        run: ./tests/Scripts/RunLocal.Tests.ps1
+      - name: Compile infrastructure
+        run: |
+          az bicep install --version v0.48.1
+          az bicep build --file infra/main.bicep --outfile "$RUNNER_TEMP/taste-test-arm.json"
+      - name: Test hosting authentication
+        shell: pwsh
+        run: ./tests/Scripts/Infrastructure.Tests.ps1 -TemplatePath (Join-Path $env:RUNNER_TEMP 'taste-test-arm.json')
       - name: Build container
         run: docker build --file src/TasteTest/Dockerfile --tag taste-test:ci src/TasteTest

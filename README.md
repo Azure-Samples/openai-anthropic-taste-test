@@ -45,7 +45,9 @@ azd auth login
 azd up
 ```
 
-`azd` asks you a few questions (subscription, region, environment name, and your organization name for the Anthropic offer), then prints a URL. Open it and you have a live taste test.
+`azd` asks you a few questions (subscription, region, environment name, and your organization name for the Anthropic offer), then prints a URL. Open it and sign in with an account in the deployment's Entra tenant.
+
+Azure hosting requires sign-in before a visitor can use model quota. Container Apps handles browser authentication; the app's managed identity handles model access. The template creates the Entra application and uses managed-identity federation, not a client secret.
 
 **What you need first**
 
@@ -53,6 +55,7 @@ azd up
 |---|---|
 | An Azure subscription | Must be allowed to buy Anthropic models from Azure Marketplace |
 | Permission to create resources | `Owner`, or `Contributor` + `Role Based Access Control Administrator` |
+| Permission to register Entra applications | Required for Azure hosting, including its enterprise application and federated credential. Azure resource roles do not grant directory permissions. If your tenant blocks application registration, ask its administrator or use local mode. |
 | Model quota | Enough capacity for one GPT and one Claude deployment |
 | Tools | [.NET SDK 10.0.403+](https://dotnet.microsoft.com/download/dotnet/10.0) and [Azure Developer CLI 1.37.1+](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd) |
 
@@ -63,8 +66,11 @@ Not every subscription can deploy Claude. CSP, free-trial, student, and some spo
 When you're done, remove everything:
 
 ```powershell
+$webAuthClientId = azd env get-value WEB_AUTH_CLIENT_ID
 azd down --purge --force
 ```
+
+The Entra application is a tenant resource, not part of the Azure resource group. If `$webAuthClientId` is nonempty, delete that environment's registration with `az ad app delete --id $webAuthClientId` after removing its Azure resources. Do not delete registrations or model deployments shared with other work.
 
 <details>
 <summary><b>If you can't create role assignments</b></summary>
@@ -230,6 +236,8 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\scripts\run-loca
 
 Start your collector first. In VS Code with Foundry Toolkit, run **Foundry Toolkit: Open Tracing** (`ai-mlstudio.tracing.open`). A standard OTLP collector works too. Keep tracing views off-screen until after the vote because model names appear in telemetry.
 
+For both local launchers, explicit telemetry variables in your shell override saved azd values. `false` disables console export; an explicitly empty collector endpoint disables OTLP. Otherwise, the launchers use the active azd environment. PowerShell restores your original variables when the app exits.
+
 The [telemetry setup](src/TasteTest/Services/TasteTestTelemetry.cs) registers `TasteTest.Chat` as both an activity source and a meter. MEAI records model-call and tool spans, token usage, duration, and streaming timing. SDK time-to-first-chunk is different from the page's time-to-first-visible-text measurement.
 
 Prompt, answer, and tool-argument capture is explicitly disabled. No exporter is enabled unless you set one of the variables above. For Azure hosting, set those values with `azd env set`, run `azd provision --preview`, then `azd up` to reapply settings and deploy the app. Use a collector reachable from the Container App, not your laptop's localhost. Console output goes to the existing application logs. No new Azure monitoring resource is required.
@@ -256,6 +264,8 @@ Being precise so nothing here is oversold:
 | `claude-sonnet-5-5` (version 2, Hosted on Azure) | The Anthropic Messages lane |
 | Azure Container App | Runs the Blazor Server app |
 | User-assigned managed identity | Lets the app reach Foundry without secrets |
+| Single-tenant Entra application and enterprise application | Signs in browser users before they can use model quota |
+| Federated identity credential | Lets Container Apps authenticate to Entra without a client secret |
 | Azure Container Registry | Stores the image built by `azd deploy` |
 | Log Analytics workspace | Collects platform and application logs |
 
@@ -272,6 +282,8 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\scripts\run-loca
 ```
 
 Both open **http://localhost:5050**, load your active `azd` environment, turn off canned answers, and sign in with the Azure credential you already have. A separate `az login` is not required if you have a usable cached credential.
+
+Local preview and live development do not require browser sign-in. Keep them on localhost; do not expose the local server as a public model endpoint. Azure hosting requires Container Apps' Entra authentication.
 
 The Windows command allows local scripts for that process only; it does not permanently change your execution policy. Organization-enforced policies still apply.
 
@@ -338,8 +350,11 @@ For non-demo environments, let it scale to zero:
 
 ```powershell
 azd env set CONTAINER_MIN_REPLICAS 0
-azd provision
+azd provision --preview
+azd up
 ```
+
+Provisioning alone reapplies the placeholder container image. `azd up` also deploys the application image.
 
 </details>
 
@@ -349,7 +364,11 @@ azd provision
 - Key-based authentication is disabled on the Foundry account.
 - No API keys or connection strings exist in the repo or in app settings.
 - The Container App uses a user-assigned managed identity with `Cognitive Services User`.
-- That same identity gets only `AcrPull` on the container registry.
+- That identity has `AcrPull` on the container registry; it does not get registry-write permission.
+- Container Apps requires Entra sign-in for all application and Blazor endpoints. Only `/health` is anonymous.
+- The Entra application is single-tenant. Accounts in that tenant, including its guests, can sign in; use enterprise-application user assignment if you need a smaller audience.
+- Browser sign-in uses a federated credential tied to the Container App's managed identity. There are no Entra client secrets or certificates to rotate. This follows the [Container Apps built-in authentication sample](https://github.com/Azure-Samples/containerapps-builtinauth-bicep).
+- Hosted model access limits `DefaultAzureCredential` to `ManagedIdentityCredential`. Local development retains the developer credential chain, as in the [.NET Entra example](https://github.com/Azure-Samples/azure-openai-starter/blob/main/src/dotnet/responses_example_entra.cs).
 - Prompts stay in server-side Blazor circuit state and go straight to the model endpoints.
 - Markdown headings, lists, emphasis, and code are rendered safely. Raw HTML is escaped, and model-generated links and images are inert text.
 
@@ -395,6 +414,10 @@ If your package mirror lags, use NuGet.org or ask the mirror owner to sync these
 
 **PowerShell says scripts are disabled.** Use the process-scoped Windows command in "Run against your deployed models." If an organizational policy still blocks execution, ask your administrator for the approved approach.
 
+**Azure hosting fails while creating an Entra application.** Azure subscription roles and Entra directory permissions are separate. Ask the tenant administrator for permission to register the application, service principal, and federated credential, or use local mode. Do not disable browser authentication to get a deployment through.
+
+**Browser sign-in fails after deployment.** Check the app registration's Container Apps callback URI and federated credential, and the managed identity referenced by Container Apps authentication. Both the browser issuer and federation issuer must use the deployment tenant. This is separate from the managed identity's Foundry role.
+
 **Provisioning fails with `Authorization failed ... roleAssignments/write`.** You can create resources but not role assignments. Either ask for `Role Based Access Control Administrator` at subscription scope, or use local mode: `azd env set HOSTING_MODE local`, `azd env set ASSIGN_INFERENCE_ROLE_TO_DEPLOYER false`, then `azd provision` and the Windows launcher above.
 
 **Claude deployment fails with `no valid payment method`.** Marketplace rejected the subscription for that offer. Confirm eligibility with your subscription administrator. Pointing `CLAUDE_MODEL_NAME` at an OpenAI model does not work around this — that lane always deploys an Anthropic model.
@@ -411,6 +434,8 @@ azd provision --preview
 ```
 
 The tests cover streaming, cancellation, retries, safe Markdown, catalog lookup, and telemetry privacy. Transport tests drive the actual SDKs through native tool-call streams and verify the tool-result follow-up requests without calling Azure.
+
+CI also tests both local launchers and compiles the Bicep template to check required browser authentication, tenant and audience restrictions, and secretless federation. See [Contributing](CONTRIBUTING.md) to run those checks locally.
 
 ## Learn more
 

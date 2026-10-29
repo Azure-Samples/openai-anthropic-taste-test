@@ -43,14 +43,17 @@ possible:
   login only when the cache is missing or for the wrong tenant. Do not use device-code login unless
   the customer explicitly requests it.
 - Do not weaken the infrastructure to key-based authentication to work around RBAC.
+- Azure hosting must require Entra browser sign-in. Never disable Container Apps authentication to
+  bypass app-registration or federation failures. Local launchers are for localhost only.
 - On failure, clean up partially provisioned resources unless the customer asks to retain them.
+  Keep pre-existing model deployments when diagnosing a browser-authentication failure.
 
 ## Choose a path
 
 | Condition | Path |
 |---|---|
 | Customer only wants to see the UI | Sample mode |
-| Customer has `Microsoft.Authorization/roleAssignments/write` | Azure-hosted mode |
+| Customer can create role assignments and register Entra applications | Azure-hosted mode |
 | Customer lacks role-assignment permission but has Foundry data access | Local-hosted mode |
 | Customer explicitly requests one mode | Honor that mode |
 
@@ -112,8 +115,12 @@ azd env set CLAUDE_INDUSTRY technology
 
 ## DEPLOY — full Azure hosting
 
-Use this path when the principal can create role assignments. It creates the Foundry account and
-project, both model deployments, Container Apps, ACR, managed identity, and Log Analytics.
+Use this path when the principal can create role assignments and Entra applications, service
+principals, and federated credentials. Azure resource roles do not grant directory permissions.
+It creates the Foundry account and project, both model deployments, Container Apps, ACR, managed
+identity, Log Analytics, and a single-tenant Entra browser-sign-in application. Container Apps
+uses managed-identity federation instead of a client secret. If directory policy prevents this,
+use local mode rather than removing browser authentication.
 
 ```powershell
 azd env set HOSTING_MODE containerapp
@@ -126,7 +133,8 @@ After deployment:
 
 1. Read `SERVICE_WEB_URI` from `azd env get-values`.
 2. GET `<SERVICE_WEB_URI>/health` and require HTTP 200.
-3. Open `SERVICE_WEB_URI`.
+3. GET `SERVICE_WEB_URI` without cookies and require a redirect to Entra sign-in, not the app.
+   Open it in the browser and sign in to the deployment tenant. Do not collect or print user tokens.
 4. Complete the browser verification under [VERIFY](#verify).
 
 ## DEPLOY — no-RBAC local hosting
@@ -188,6 +196,8 @@ verification below.
 13. Enable `TASTE_TEST_TELEMETRY_CONSOLE=true` or set `OTEL_EXPORTER_OTLP_ENDPOINT` to a local
     HTTP/protobuf collector. Verify model/tool spans and usage. Prompts, answers, and tool arguments
     must not be captured. Keep telemetry private and off-screen until reveal.
+    Explicit shell telemetry variables override saved azd values in both local launchers;
+    `false` disables console export and an explicitly empty endpoint disables OTLP.
 
 For a direct Claude smoke test, use the provisioned endpoint and deployment from
 `azd env get-values`. Acquire an Entra token for `https://ai.azure.com/.default`, POST a minimal
@@ -207,10 +217,11 @@ text response. Never print the token.
 | One lane fails while the other succeeds | Provider-specific quota, deployment, auth, or endpoint problem | Check server logs; the browser intentionally hides provider details before reveal |
 | Empty answer or token-limit message | Reasoning can consume the output budget before visible text | Use the 4096-token default, restart the local app after settings change, then Retry comparison. Check terminal finish reason and usage in server logs. |
 | PowerShell reports scripts are disabled | The launcher was blocked before the app started | Use the process-scoped Windows launcher above. Do not override organization-enforced policies. |
+| Entra application registration fails | Azure permissions do not grant Entra directory permissions | Request permission for the application, service principal, and federated credential, or use local mode. Keep hosted browser authentication enabled. |
 
 ## MODIFY
 
-Change models through azd environment values, then re-run preview and provision:
+Change models through azd environment values, then re-run preview:
 
 ```powershell
 azd env set CLAUDE_MODEL_NAME claude-sonnet-5-5
@@ -219,8 +230,10 @@ azd env set CLAUDE_MODEL_CAPACITY 10
 azd env set AOAI_MODEL_NAME gpt-6.1-sol
 azd env set AOAI_MODEL_VERSION 2026-09-29
 azd provision --preview --no-prompt
-azd provision --no-prompt
 ```
+
+For local hosting, run `azd provision --no-prompt`. For Azure hosting, run `azd up --no-prompt`
+so the application image is redeployed too; provisioning alone reapplies the placeholder image.
 
 Always verify current model versions, region support, and quota before changing defaults.
 
@@ -230,8 +243,13 @@ Confirm the selected environment and resource group before deleting:
 
 ```powershell
 azd env get-values
+$webAuthClientId = azd env get-value WEB_AUTH_CLIENT_ID
 azd down --purge --force --no-prompt
 ```
+
+The Entra application is a tenant resource. If its recorded client ID is nonempty, delete only
+that environment's application with `az ad app delete --id $webAuthClientId`. Do not delete
+registrations or model deployments shared with other work.
 
 After a failed deployment, verify that the resource group and any soft-deleted Cognitive Services
 account are gone. Do not delete resources outside the selected azd environment.
