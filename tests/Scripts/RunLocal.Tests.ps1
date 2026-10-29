@@ -12,7 +12,9 @@ $dotnet = Join-Path $fixture 'dotnet'
 $names = @(
     'TASTE_TEST_TELEMETRY_CONSOLE', 'OTEL_EXPORTER_OTLP_ENDPOINT',
     'TASTE_TEST_MAX_OUTPUT_TOKENS', 'TASTE_TEST_USE_SAMPLE_RESPONSES',
-    'MOCK_CONSOLE', 'MOCK_ENDPOINT', 'MOCK_BIN', 'MOCK_LAUNCHER'
+    'MOCK_CONSOLE', 'MOCK_ENDPOINT', 'MOCK_BIN', 'MOCK_LAUNCHER', 'MOCK_SETTINGS',
+    'TasteTest__Gpt__Options__Endpoint', 'TasteTest__Gpt__Model',
+    'TasteTest__Claude__Options__Endpoint', 'TasteTest__Claude__Model'
 )
 $previous = @{}
 foreach ($name in $names) {
@@ -50,6 +52,7 @@ function azd {
     'TASTE_TEST_TELEMETRY_CONSOLE="' + $env:MOCK_CONSOLE + '"'
     'OTEL_EXPORTER_OTLP_ENDPOINT="' + $env:MOCK_ENDPOINT + '"'
     'TASTE_TEST_MAX_OUTPUT_TOKENS="8192"'
+    if ($env:MOCK_SETTINGS) { $env:MOCK_SETTINGS -split "`n" }
     $global:LASTEXITCODE = 0
 }
 function dotnet {
@@ -57,6 +60,10 @@ function dotnet {
     "ENDPOINT=$env:OTEL_EXPORTER_OTLP_ENDPOINT"
     "TOKENS=$env:TASTE_TEST_MAX_OUTPUT_TOKENS"
     "SAMPLE=$env:TASTE_TEST_USE_SAMPLE_RESPONSES"
+    "GPT_ENDPOINT=$env:TasteTest__Gpt__Options__Endpoint"
+    "GPT_MODEL=$env:TasteTest__Gpt__Model"
+    "CLAUDE_ENDPOINT=$env:TasteTest__Claude__Options__Endpoint"
+    "CLAUDE_MODEL=$env:TasteTest__Claude__Model"
     $global:LASTEXITCODE = 0
 }
 & $Launcher
@@ -72,6 +79,7 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 printf 'TASTE_TEST_TELEMETRY_CONSOLE="%s"\n' "$MOCK_CONSOLE"
 printf 'OTEL_EXPORTER_OTLP_ENDPOINT="%s"\n' "$MOCK_ENDPOINT"
 printf 'TASTE_TEST_MAX_OUTPUT_TOKENS="8192"\n'
+printf '%s\n' "${MOCK_SETTINGS-}"
 '@.Replace("`r`n", "`n"), $encoding)
 
     [IO.File]::WriteAllText($dotnet, @'
@@ -79,6 +87,9 @@ printf 'TASTE_TEST_MAX_OUTPUT_TOKENS="8192"\n'
 printf 'CONSOLE=%s\nENDPOINT=%s\nTOKENS=%s\nSAMPLE=%s\n' \
   "${TASTE_TEST_TELEMETRY_CONSOLE-}" "${OTEL_EXPORTER_OTLP_ENDPOINT-}" \
   "$TASTE_TEST_MAX_OUTPUT_TOKENS" "$TASTE_TEST_USE_SAMPLE_RESPONSES"
+printf 'GPT_ENDPOINT=%s\nGPT_MODEL=%s\nCLAUDE_ENDPOINT=%s\nCLAUDE_MODEL=%s\n' \
+  "${TasteTest__Gpt__Options__Endpoint-}" "${TasteTest__Gpt__Model-}" \
+  "${TasteTest__Claude__Options__Endpoint-}" "${TasteTest__Claude__Model-}"
 '@.Replace("`r`n", "`n"), $encoding)
 
     $powershell = (Get-Command pwsh -ErrorAction Stop).Source
@@ -94,7 +105,35 @@ printf 'CONSOLE=%s\nENDPOINT=%s\nTOKENS=%s\nSAMPLE=%s\n' \
         @{ Name = 'Saved settings'; Console = $null; Endpoint = $null; SavedConsole = 'true'; SavedEndpoint = 'http://saved:4318'; ExpectedConsole = 'true'; ExpectedEndpoint = 'http://saved:4318' },
         @{ Name = 'Process overrides'; Console = 'true'; Endpoint = 'http://localhost:4318'; SavedConsole = 'false'; SavedEndpoint = ''; ExpectedConsole = 'true'; ExpectedEndpoint = 'http://localhost:4318' },
         @{ Name = 'Explicit false'; Console = 'false'; Endpoint = $null; SavedConsole = 'true'; SavedEndpoint = 'http://saved:4318'; ExpectedConsole = 'false'; ExpectedEndpoint = 'http://saved:4318' },
-        @{ Name = 'Explicit empty endpoint'; Console = $null; Endpoint = ''; SavedConsole = 'false'; SavedEndpoint = 'http://saved:4318'; ExpectedConsole = 'false'; ExpectedEndpoint = '' }
+        @{ Name = 'Explicit empty endpoint'; Console = $null; Endpoint = ''; SavedConsole = 'false'; SavedEndpoint = 'http://saved:4318'; ExpectedConsole = 'false'; ExpectedEndpoint = '' },
+        @{
+            Name = 'Legacy connection outputs'
+            SavedConsole = 'false'; SavedEndpoint = ''; ExpectedConsole = 'false'; ExpectedEndpoint = ''
+            Settings = "AZURE_FOUNDRY_ENDPOINT=`"https://legacy.example.test`"`nAOAI_DEPLOYMENT_NAME=`"legacy-gpt`"`nCLAUDE_DEPLOYMENT_NAME=`"legacy-claude`""
+            GptEndpoint = 'https://legacy.example.test/openai/v1/'; GptModel = 'legacy-gpt'
+            ClaudeEndpoint = 'https://legacy.example.test/anthropic/'; ClaudeModel = 'legacy-claude'
+        },
+        @{
+            Name = 'Explicit configuration after legacy outputs'
+            SavedConsole = 'false'; SavedEndpoint = ''; ExpectedConsole = 'false'; ExpectedEndpoint = ''
+            Settings = "GPT_ENDPOINT=`"https://legacy.example.test/v1/`"`nAOAI_DEPLOYMENT_NAME=`"legacy-gpt`"`nCLAUDE_ENDPOINT=`"https://legacy.example.test/`"`nCLAUDE_DEPLOYMENT_NAME=`"legacy-claude`"`nTasteTest__Gpt__Options__Endpoint=`"https://explicit.example.test/v1/`"`nTasteTest__Gpt__Model=`"explicit-gpt`"`nTasteTest__Claude__Options__Endpoint=`"https://explicit.example.test/`"`nTasteTest__Claude__Model=`"explicit-claude`""
+            GptEndpoint = 'https://explicit.example.test/v1/'; GptModel = 'explicit-gpt'
+            ClaudeEndpoint = 'https://explicit.example.test/'; ClaudeModel = 'explicit-claude'
+        },
+        @{
+            Name = 'Process connection configuration wins'
+            SavedConsole = 'false'; SavedEndpoint = ''; ExpectedConsole = 'false'; ExpectedEndpoint = ''
+            Settings = "TasteTest__Gpt__Options__Endpoint=`"https://saved.example.test/v1/`"`nTasteTest__Gpt__Model=`"saved-gpt`""
+            ProcessGptEndpoint = 'https://process.example.test/v1/'; ProcessGptModel = 'process-gpt'
+            GptEndpoint = 'https://process.example.test/v1/'; GptModel = 'process-gpt'
+        },
+        @{
+            Name = 'Full endpoint outputs beat account URL'
+            SavedConsole = 'false'; SavedEndpoint = ''; ExpectedConsole = 'false'; ExpectedEndpoint = ''
+            Settings = "AZURE_FOUNDRY_ENDPOINT=`"https://legacy.example.test`"`nGPT_ENDPOINT=`"https://dedicated.example.test/v1/`"`nCLAUDE_ENDPOINT=`"https://dedicated.example.test/`""
+            GptEndpoint = 'https://dedicated.example.test/v1/'
+            ClaudeEndpoint = 'https://dedicated.example.test/'
+        }
     )
 
     foreach ($case in $cases) {
@@ -104,6 +143,11 @@ printf 'CONSOLE=%s\nENDPOINT=%s\nTOKENS=%s\nSAMPLE=%s\n' \
         $env:TASTE_TEST_USE_SAMPLE_RESPONSES = 'true'
         $env:MOCK_CONSOLE = $case.SavedConsole
         $env:MOCK_ENDPOINT = $case.SavedEndpoint
+        $env:MOCK_SETTINGS = $case.Settings
+        Set-ProcessVariable 'TasteTest__Gpt__Options__Endpoint' $case.ProcessGptEndpoint
+        Set-ProcessVariable 'TasteTest__Gpt__Model' $case.ProcessGptModel
+        Set-ProcessVariable 'TasteTest__Claude__Options__Endpoint' $null
+        Set-ProcessVariable 'TasteTest__Claude__Model' $null
 
         $output = @(& $powershell -NoProfile -ExecutionPolicy RemoteSigned -File $probe -Launcher $launcher)
         if ($LASTEXITCODE -ne 0) { throw "PowerShell launcher failed: $($case.Name)." }
@@ -111,6 +155,10 @@ printf 'CONSOLE=%s\nENDPOINT=%s\nTOKENS=%s\nSAMPLE=%s\n' \
         Assert-Capture $output 'ENDPOINT' $case.ExpectedEndpoint
         Assert-Capture $output 'TOKENS' '8192'
         Assert-Capture $output 'SAMPLE' 'false'
+        Assert-Capture $output 'GPT_ENDPOINT' $case.GptEndpoint
+        Assert-Capture $output 'GPT_MODEL' $case.GptModel
+        Assert-Capture $output 'CLAUDE_ENDPOINT' $case.ClaudeEndpoint
+        Assert-Capture $output 'CLAUDE_MODEL' $case.ClaudeModel
         Assert-Capture $output 'RESTORED_CONSOLE' $case.Console
         Assert-Capture $output 'RESTORED_ENDPOINT' $case.Endpoint
         Assert-Capture $output 'RESTORED_CONSOLE_SET' ($null -ne $case.Console)
@@ -122,6 +170,10 @@ printf 'CONSOLE=%s\nENDPOINT=%s\nTOKENS=%s\nSAMPLE=%s\n' \
         Assert-Capture $output 'ENDPOINT' $case.ExpectedEndpoint
         Assert-Capture $output 'TOKENS' '8192'
         Assert-Capture $output 'SAMPLE' 'false'
+        Assert-Capture $output 'GPT_ENDPOINT' $case.GptEndpoint
+        Assert-Capture $output 'GPT_MODEL' $case.GptModel
+        Assert-Capture $output 'CLAUDE_ENDPOINT' $case.ClaudeEndpoint
+        Assert-Capture $output 'CLAUDE_MODEL' $case.ClaudeModel
         Write-Output "PASS: $($case.Name), PowerShell and Bash"
     }
 }

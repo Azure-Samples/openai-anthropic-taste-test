@@ -160,23 +160,35 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               value: appIdentity.properties.clientId
             }
             {
-              name: 'AZURE_TOKEN_CREDENTIALS'
+              name: 'TasteTest__Credential__CredentialSource'
               value: 'ManagedIdentityCredential'
             }
             {
-              name: 'AZURE_FOUNDRY_ENDPOINT'
-              value: 'https://${foundry.name}.services.ai.azure.com'
+              name: 'TasteTest__Credential__ManagedIdentityIdKind'
+              value: 'ClientId'
             }
             {
-              name: 'AZURE_FOUNDRY_RESOURCE_NAME'
-              value: foundry.name
+              name: 'TasteTest__Credential__ClientId'
+              value: appIdentity.properties.clientId
             }
             {
-              name: 'AOAI_DEPLOYMENT_NAME'
+              name: 'TasteTest__Credential__Scope'
+              value: 'https://ai.azure.com/.default'
+            }
+            {
+              name: 'TasteTest__Gpt__Options__Endpoint'
+              value: 'https://${foundry.name}.services.ai.azure.com/openai/v1/'
+            }
+            {
+              name: 'TasteTest__Claude__Options__Endpoint'
+              value: 'https://${foundry.name}.services.ai.azure.com/anthropic/'
+            }
+            {
+              name: 'TasteTest__Gpt__Model'
               value: aoaiDeploymentName
             }
             {
-              name: 'CLAUDE_DEPLOYMENT_NAME'
+              name: 'TasteTest__Claude__Model'
               value: claudeDeploymentName
             }
             {

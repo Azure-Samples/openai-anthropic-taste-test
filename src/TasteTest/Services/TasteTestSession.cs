@@ -18,24 +18,28 @@ namespace TasteTest.Services;
 /// </remarks>
 public sealed class TasteTestSession
 {
-    private readonly IModelChatClientFactory _clients;
+    private readonly IChatClient _gpt;
+    private readonly IChatClient _claude;
     private readonly ILaneOrderRandomizer _randomizer;
     private readonly TasteTestOptions _options;
     private readonly ILogger<TasteTestSession> _logger;
     private List<TasteTestLane> _lanes;
 
     public TasteTestSession(
-        IModelChatClientFactory clients,
+        [FromKeyedServices("gpt")] IChatClient gpt,
+        [FromKeyedServices("claude")] IChatClient claude,
         ILaneOrderRandomizer randomizer,
         IOptions<TasteTestOptions> options,
         ILogger<TasteTestSession> logger)
     {
-        ArgumentNullException.ThrowIfNull(clients);
+        ArgumentNullException.ThrowIfNull(gpt);
+        ArgumentNullException.ThrowIfNull(claude);
         ArgumentNullException.ThrowIfNull(randomizer);
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(logger);
 
-        _clients = clients;
+        _gpt = gpt;
+        _claude = claude;
         _randomizer = randomizer;
         _options = options.Value;
         _logger = logger;
@@ -92,7 +96,7 @@ public sealed class TasteTestSession
             throw new InvalidOperationException("A response is already in progress.");
         }
 
-        var normalizedPrompt = prompt.Trim();
+        string normalizedPrompt = prompt.Trim();
         if (normalizedPrompt.Length == 0)
         {
             throw new ArgumentException("Enter a prompt before starting the taste test.", nameof(prompt));
@@ -107,7 +111,7 @@ public sealed class TasteTestSession
 
         cancellationToken.ThrowIfCancellationRequested();
         IsBusy = true;
-        var attempts = VisibleLanes
+        (TasteTestLane Lane, TasteTestTurn Turn)[] attempts = VisibleLanes
             .Select(lane => (Lane: lane, Turn: lane.BeginTurn(normalizedPrompt)))
             .ToArray();
 
@@ -115,7 +119,7 @@ public sealed class TasteTestSession
         {
             // Credential acquisition can block synchronously inside a vendor SDK. Keep it off
             // the Blazor circuit so both lanes start independently and Cancel stays responsive.
-            var responses = await Task.WhenAll(attempts.Select(attempt =>
+            ChatResponse?[] responses = await Task.WhenAll(attempts.Select(attempt =>
                 Task.Run(() => StreamLaneAsync(
                     attempt.Lane, attempt.Turn, notifyProgress, cancellationToken), CancellationToken.None)));
 
@@ -125,7 +129,7 @@ public sealed class TasteTestSession
             // with extra context when the user retries. UI transcripts retain partial answers.
             if (responses.All(response => response is not null))
             {
-                for (var index = 0; index < attempts.Length; index++)
+                for (int index = 0; index < attempts.Length; index++)
                 {
                     if (responses[index] is { } response)
                     {
@@ -179,7 +183,7 @@ public sealed class TasteTestSession
             throw new InvalidOperationException("Model identity is available only after reveal.");
         }
 
-        return _clients.GetIdentity(provider);
+        return ModelCatalog.CreateIdentity(provider, GetClient(provider));
     }
 
     /// <summary>Starts a fresh blind comparison with a newly randomized lane order.</summary>
@@ -200,19 +204,19 @@ public sealed class TasteTestSession
         Func<bool, Task> notifyProgress,
         CancellationToken cancellationToken)
     {
-        var updates = new List<ChatResponseUpdate>();
-        var startedAt = Stopwatch.GetTimestamp();
-        var toolBoundary = false;
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        List<ChatResponseUpdate> updates = new List<ChatResponseUpdate>();
+        long startedAt = Stopwatch.GetTimestamp();
+        bool toolBoundary = false;
+        using CancellationTokenSource deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(_options.RequestTimeoutSeconds));
-        var requestToken = deadline.Token;
+        CancellationToken requestToken = deadline.Token;
 
         try
         {
             await notifyProgress(true);
             requestToken.ThrowIfCancellationRequested();
-            var client = _clients.GetClient(lane.Provider);
-            var chatOptions = new ChatOptions
+            IChatClient client = GetClient(lane.Provider);
+            ChatOptions chatOptions = new ChatOptions
             {
                 Instructions = _options.SystemPrompt,
                 MaxOutputTokens = _options.MaxOutputTokens,
@@ -235,12 +239,12 @@ public sealed class TasteTestSession
             };
 
             // Neither the SDK nor a failed call can append an incomplete user turn to history.
-            var messages = new List<ChatMessage>(lane.History)
+            List<ChatMessage> messages = new List<ChatMessage>(lane.History)
             {
                 new(ChatRole.User, turn.Prompt)
             };
 
-            await foreach (var update in client
+            await foreach (ChatResponseUpdate update in client
                 .GetStreamingResponseAsync(messages, chatOptions, requestToken)
                 .ConfigureAwait(false))
             {
@@ -270,11 +274,11 @@ public sealed class TasteTestSession
 
             // ToChatResponse folds provider-specific usage content into one UsageDetails, so the
             // OpenAI Responses and Anthropic Messages token counts arrive in the same shape.
-            var response = updates.ToChatResponse();
+            ChatResponse response = updates.ToChatResponse();
             requestToken.ThrowIfCancellationRequested();
             turn.Usage = response.Usage;
             turn.FinishReason = response.FinishReason;
-            var toolError = response.Messages.SelectMany(message => message.Contents)
+            Exception? toolError = response.Messages.SelectMany(message => message.Contents)
                 .OfType<FunctionResultContent>().FirstOrDefault(content => content.Exception is not null)?.Exception;
             if (toolError is not null || turn.CatalogLookupErrors > 0)
             {
@@ -359,9 +363,16 @@ public sealed class TasteTestSession
         }
     }
 
+    private IChatClient GetClient(ProviderKind provider) => provider switch
+    {
+        ProviderKind.OpenAI => _gpt,
+        ProviderKind.Anthropic => _claude,
+        _ => throw ModelCatalog.UnknownProvider(provider)
+    };
+
     private List<TasteTestLane> CreateLanes()
     {
-        var (first, second) = _randomizer.PlaceOpenAIFirst()
+        (ProviderKind first, ProviderKind second) = _randomizer.PlaceOpenAIFirst()
             ? (ProviderKind.OpenAI, ProviderKind.Anthropic)
             : (ProviderKind.Anthropic, ProviderKind.OpenAI);
 

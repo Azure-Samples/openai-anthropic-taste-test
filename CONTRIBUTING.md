@@ -10,6 +10,8 @@ This project follows the [Microsoft Open Source Code of Conduct](https://opensou
 2. Never commit API keys, access tokens, subscription IDs, tenant IDs, or `.azure/` state.
 3. Keep the two model lanes behaviorally symmetric before reveal.
 4. If model defaults change, update Bicep, README configuration tables, and the architecture source and PNG together.
+   Keep SDK setup examples explicitly typed. Select a specific credential through configuration;
+   do not add a default credential chain or a host-specific AI client package.
 5. Run:
 
    ```powershell
@@ -36,6 +38,12 @@ pwsh -NoProfile -File .\tests\Scripts\Infrastructure.Tests.ps1 -TemplatePath "$e
 Use Bicep 0.48.1 or later. CI runs both checks. The hosting test verifies required Entra
 sign-in, the single-tenant issuer and audience, the health-probe exception, and managed-identity
 federation without client secrets. It does not replace testing browser sign-in after deployment.
+
+Client-registration changes must keep both providers keyed and configuration-driven. OpenAI
+settings bind through the official SDK registration API. The README setup is extracted from a
+compiled region in `Program.cs` and compared by a test. Keep endpoint/authentication behavior
+covered by `ChatClientRegistrationTests`; run `Category=Live` only with explicitly configured
+endpoints and CLI credentials.
 
 ## Local sample mode
 

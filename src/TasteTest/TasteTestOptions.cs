@@ -6,9 +6,8 @@ namespace TasteTest;
 /// Application settings for the taste test.
 /// </summary>
 /// <remarks>
-/// Values bind from the <c>TasteTest</c> configuration section and are then overridden by the
-/// flat environment variables that <c>azd</c> writes, so a provisioned environment needs no
-/// appsettings edits.
+/// UI and request limits bind from the <c>TasteTest</c> configuration section. SDK connection
+/// and credential settings are bound separately by their keyed client registrations.
 /// </remarks>
 public sealed class TasteTestOptions
 {
@@ -18,16 +17,6 @@ public sealed class TasteTestOptions
     internal const int MaximumOutputTokens = 16_384;
     internal const int MinimumPromptCharacters = 100;
     internal const int MaximumPromptCharacters = 100_000;
-
-    /// <summary>Foundry account endpoint, for example <c>https://my-account.services.ai.azure.com</c>.</summary>
-    public string FoundryEndpoint { get; set; } = string.Empty;
-
-    /// <summary>Foundry account subdomain. Derived from <see cref="FoundryEndpoint"/> when omitted.</summary>
-    public string FoundryResourceName { get; set; } = string.Empty;
-
-    public string AoaiDeploymentName { get; set; } = "gpt-6.1-sol";
-
-    public string ClaudeDeploymentName { get; set; } = "claude-sonnet-5-5";
 
     // Reasoning tokens share this budget with visible output on the default models.
     public int MaxOutputTokens { get; set; } = 4_096;
@@ -59,29 +48,12 @@ public sealed class TasteTestOptions
     {
         ArgumentNullException.ThrowIfNull(configuration);
 
-        var options = configuration.GetSection(SectionName).Get<TasteTestOptions>() ?? new TasteTestOptions();
-
-        options.FoundryEndpoint =
-            configuration["AZURE_FOUNDRY_ENDPOINT"] ?? options.FoundryEndpoint;
-        options.FoundryResourceName =
-            configuration["AZURE_FOUNDRY_RESOURCE_NAME"] ?? options.FoundryResourceName;
-        options.AoaiDeploymentName =
-            configuration["AOAI_DEPLOYMENT_NAME"] ?? options.AoaiDeploymentName;
-        options.ClaudeDeploymentName =
-            configuration["CLAUDE_DEPLOYMENT_NAME"] ?? options.ClaudeDeploymentName;
+        TasteTestOptions options = configuration.GetSection(SectionName).Get<TasteTestOptions>() ?? new TasteTestOptions();
 
         options.UseSampleResponses =
             configuration.GetValue<bool?>("TASTE_TEST_USE_SAMPLE_RESPONSES") ?? options.UseSampleResponses;
         options.MaxOutputTokens =
             configuration.GetValue<int?>("TASTE_TEST_MAX_OUTPUT_TOKENS") ?? options.MaxOutputTokens;
-
-        options.FoundryEndpoint = options.FoundryEndpoint.Trim().TrimEnd('/');
-
-        if (string.IsNullOrWhiteSpace(options.FoundryResourceName) &&
-            Uri.TryCreate(options.FoundryEndpoint, UriKind.Absolute, out var endpoint))
-        {
-            options.FoundryResourceName = endpoint.Host.Split('.')[0];
-        }
 
         return options;
     }
@@ -89,7 +61,7 @@ public sealed class TasteTestOptions
     /// <summary>Returns every configuration problem so one restart reports all of them.</summary>
     public IReadOnlyList<string> GetValidationErrors()
     {
-        var errors = new List<string>();
+        List<string> errors = [];
 
         if (MaxOutputTokens is < MinimumOutputTokens or > MaximumOutputTokens)
         {
@@ -113,33 +85,6 @@ public sealed class TasteTestOptions
             errors.Add($"{SectionName}:{nameof(SeedPrompts)} must contain at least one prompt.");
         }
 
-        // Sample mode never contacts Azure, so the Foundry settings stay optional there.
-        if (UseSampleResponses)
-        {
-            return errors;
-        }
-
-        if (!Uri.TryCreate(FoundryEndpoint, UriKind.Absolute, out var endpoint) ||
-            endpoint.Scheme != Uri.UriSchemeHttps)
-        {
-            errors.Add("Set AZURE_FOUNDRY_ENDPOINT to the HTTPS endpoint emitted by azd provision.");
-        }
-
-        if (string.IsNullOrWhiteSpace(FoundryResourceName))
-        {
-            errors.Add("Set AZURE_FOUNDRY_RESOURCE_NAME to the Foundry account subdomain.");
-        }
-
-        if (string.IsNullOrWhiteSpace(AoaiDeploymentName))
-        {
-            errors.Add("Set AOAI_DEPLOYMENT_NAME to the OpenAI model deployment name.");
-        }
-
-        if (string.IsNullOrWhiteSpace(ClaudeDeploymentName))
-        {
-            errors.Add("Set CLAUDE_DEPLOYMENT_NAME to the Anthropic model deployment name.");
-        }
-
         return errors;
     }
 
@@ -147,7 +92,7 @@ public sealed class TasteTestOptions
     /// <exception cref="OptionsValidationException">The configuration is incomplete or invalid.</exception>
     public void Validate()
     {
-        var errors = GetValidationErrors();
+        IReadOnlyList<string> errors = GetValidationErrors();
         if (errors.Count > 0)
         {
             throw new OptionsValidationException(SectionName, typeof(TasteTestOptions), errors);

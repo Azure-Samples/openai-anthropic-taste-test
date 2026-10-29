@@ -140,64 +140,68 @@ This is the part worth reading. Two vendors, two protocols, one application loop
 | GPT | OpenAI SDK for .NET | `/openai/v1` | Responses API |
 | Claude | Anthropic C# SDK | `/anthropic` | Messages API |
 
-Each SDK has its own client construction. Both become an `IChatClient`, with the same tool-calling and telemetry middleware. This is a shortened version; the [factory](src/TasteTest/Services/FoundryModelChatClientFactory.cs) also configures stateless Responses calls and incomplete-stream handling:
+Both providers are registered as keyed `IChatClient` services from configuration. This is the compiled setup in [Program.cs](src/TasteTest/Program.cs); a test keeps this snippet synchronized with it:
 
-```csharp
-var credential = new DefaultAzureCredential();
-
-IChatClient gpt = new OpenAIClient(
-        new BearerTokenPolicy(credential, "https://ai.azure.com/.default"),
-        new OpenAIClientOptions { Endpoint = new($"{endpoint}/openai/v1/") })
-    .GetResponsesClient()
-    .AsIChatClient(aoaiDeployment)
-    .AsBuilder()
-    .UseFunctionInvocation(configure: client => client.MaximumIterationsPerRequest = 4)
-    .UseOpenTelemetry(sourceName: "TasteTest.Chat",
-        configure: telemetry => telemetry.EnableSensitiveData = false)
-    .Build();
-
-IChatClient claude = new AnthropicFoundryClient(
-        new AnthropicFoundryIdentityTokenCredentials(credential, resourceName))
-    .AsIChatClient(claudeDeployment)
-    .AsBuilder()
-    .UseFunctionInvocation(configure: client => client.MaximumIterationsPerRequest = 4)
-    .UseOpenTelemetry(sourceName: "TasteTest.Chat",
-        configure: telemetry => telemetry.EnableSensitiveData = false)
-    .Build();
-```
-
-There are no API keys. `BearerTokenPolicy` and `AnthropicFoundryIdentityTokenCredentials` both take the same Entra `TokenCredential` and refresh tokens on their own.
-
-After that, nothing in the app knows which vendor it is talking to. The comparison loop is plain `Microsoft.Extensions.AI` code — same call, same options, same streaming type, for both lanes:
-
-```csharp
-var responses = await Task.WhenAll(lanes.Select(async lane =>
-{
-    var messages = new List<ChatMessage>(lane.History) { new(ChatRole.User, prompt) };
-    var updates = new List<ChatResponseUpdate>();
-
-    await foreach (var update in lane.Client.GetStreamingResponseAsync(
-        messages,
-        new ChatOptions
-        {
-            MaxOutputTokens = 4096,
-            Reasoning = new() { Effort = ReasoningEffort.Low },
-            Tools = [DemoSupportCatalog.CreateTool(onLookup)]
-        },
-        cancellationToken))
+```csharp Snippet:KeyedChatClientSetup
+builder.AddCredentialFromConfig("TasteTest:Credential");
+builder.AddKeyedResponsesChatClient("gpt", "TasteTest:Gpt")
+    .UseFunctionInvocation(configure: client =>
     {
-        updates.Add(update);
-        lane.Buffer.Append(update.Text);
-        await requestThrottledRender();
-    }
-
-    return updates.ToChatResponse();
-}));
+        client.MaximumIterationsPerRequest = 4;
+        client.MaximumConsecutiveErrorsPerRequest = 4;
+    })
+    .UseOpenTelemetry(sourceName: "TasteTest.Chat", configure: telemetry => telemetry.EnableSensitiveData = false);
+builder.AddKeyedAnthropicChatClient("claude", "TasteTest:Claude")
+    .UseFunctionInvocation(configure: client =>
+    {
+        client.MaximumIterationsPerRequest = 4;
+        client.MaximumConsecutiveErrorsPerRequest = 4;
+    })
+    .UseOpenTelemetry(sourceName: "TasteTest.Chat", configure: telemetry => telemetry.EnableSensitiveData = false);
 ```
 
-Here, `onLookup` is the per-turn callback that records catalog results for the page. The full implementation is in the [session](src/TasteTest/Services/TasteTestSession.cs).
+The small [registration helpers](src/TasteTest/Services/ChatClientRegistration.cs) use the official OpenAI SDK's `AddKeyedResponsesClient` to bind its settings, and the standard `AnthropicClient` with an explicit base URL. They add the MEAI adapters; they do not implement either provider's HTTP protocol. There are no host-specific AI SDK dependencies.
 
-`ToChatResponse()` also folds each provider's usage reporting into one `UsageDetails`, which is why the page can show token counts for both lanes without any provider-specific code.
+OpenAI's native configuration path creates its `BearerTokenPolicy`. Anthropic's standard SDK accepts an `IAccessTokenProvider`; the sample adapts the configured Azure.Identity `TokenCredential` to that callback. The SDK owns token caching and refresh, so no custom authentication HTTP handler is needed.
+
+The [session](src/TasteTest/Services/TasteTestSession.cs) receives the two keyed services and uses the same streaming, tool-calling, cancellation, and history logic for both. `ToChatResponse()` folds API usage into one `UsageDetails` type.
+
+### Connection and credential configuration
+
+The endpoint and model are separate from the UI settings. Set the complete API base URL; the application does not derive it from a resource name:
+
+```json
+{
+  "TasteTest": {
+    "Credential": {
+      "CredentialSource": "ManagedIdentityCredential",
+      "ManagedIdentityIdKind": "ClientId",
+      "ClientId": "",
+      "Scope": "https://ai.azure.com/.default"
+    },
+    "Gpt": {
+      "Credential": "$TasteTest:Credential",
+      "Model": "gpt-6.1-sol",
+      "Options": {
+        "Endpoint": "https://<resource>.services.ai.azure.com/openai/v1/"
+      }
+    },
+    "Claude": {
+      "Credential": "$TasteTest:Credential",
+      "Model": "claude-sonnet-5-5",
+      "Options": {
+        "Endpoint": "https://<resource>.services.ai.azure.com/anthropic/"
+      }
+    }
+  }
+}
+```
+
+For local development, change only `CredentialSource` to `AzureCliCredential` after `az login`. `AzureDeveloperCliCredential` is also supported for an existing `azd auth login`. Set `TenantId` in the credential section when the account belongs to multiple tenants. The deployed template sets the managed identity's client ID; an omitted client ID selects system-assigned managed identity.
+
+The sample deliberately selects a specific credential rather than a default credential chain. Connection settings also use standard .NET environment-variable names, for example `TasteTest__Credential__CredentialSource=AzureCliCredential`.
+
+For the providers' public APIs, omit `Credential`, set `ApiKey` through environment variables or user secrets, and use `https://api.openai.com/v1/` or `https://api.anthropic.com/` as the endpoint. Setting both authentication options is an error. Do not put keys in checked-in configuration. Both helpers reject relative endpoints and non-HTTPS URLs; HTTP is allowed only for a loopback test server.
 
 The [completion adapter](src/TasteTest/Services/OpenAIStreamCompletionClient.cs) preserves finish reason and usage on incomplete OpenAI streams, which MEAI.OpenAI 10.11.0 does not yet convert. OpenAI calls use `store: false` and request encrypted reasoning content, so tool iterations can replay context without relying on a previously stored response ID.
 
@@ -281,7 +285,9 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\scripts\run-loca
 ./scripts/run-local.sh
 ```
 
-Both open **http://localhost:5050**, load your active `azd` environment, turn off canned answers, and sign in with the Azure credential you already have. A separate `az login` is not required if you have a usable cached credential.
+Both open **http://localhost:5050**, load your active `azd` endpoints and model IDs, and turn off canned answers. Development configuration selects `AzureCliCredential`. To use an existing `azd auth login` instead, set `TasteTest__Credential__CredentialSource=AzureDeveloperCliCredential` in your shell.
+
+New environments output `GPT_ENDPOINT` and `CLAUDE_ENDPOINT`. The launchers also translate older environments' account URL into the same provider configuration, so upgrading the app does not require provisioning again.
 
 Local preview and live development do not require browser sign-in. Keep them on localhost; do not expose the local server as a public model endpoint. Azure hosting requires Container Apps' Entra authentication.
 
@@ -368,7 +374,7 @@ Provisioning alone reapplies the placeholder container image. `azd up` also depl
 - Container Apps requires Entra sign-in for all application and Blazor endpoints. Only `/health` is anonymous.
 - The Entra application is single-tenant. Accounts in that tenant, including its guests, can sign in; use enterprise-application user assignment if you need a smaller audience.
 - Browser sign-in uses a federated credential tied to the Container App's managed identity. There are no Entra client secrets or certificates to rotate. This follows the [Container Apps built-in authentication sample](https://github.com/Azure-Samples/containerapps-builtinauth-bicep).
-- Hosted model access limits `DefaultAzureCredential` to `ManagedIdentityCredential`. Local development retains the developer credential chain, as in the [.NET Entra example](https://github.com/Azure-Samples/azure-openai-starter/blob/main/src/dotnet/responses_example_entra.cs).
+- Hosted model access selects `ManagedIdentityCredential` explicitly. Local development selects a specific CLI credential through the same configuration, as in the [.NET Entra example](https://github.com/Azure-Samples/azure-openai-starter/blob/main/src/dotnet/responses_example_entra.cs).
 - Prompts stay in server-side Blazor circuit state and go straight to the model endpoints.
 - Markdown headings, lists, emphasis, and code are rendered safely. Raw HTML is escaped, and model-generated links and images are inert text.
 
@@ -384,7 +390,7 @@ Stable releases checked on **October 28, 2026**:
 | .NET SDK / ASP.NET Core runtime | `10.0.403` / `10.0.14` |
 | Microsoft.Extensions.AI / Microsoft.Extensions.AI.OpenAI | `10.11.0` |
 | OpenAI | `2.14.0` |
-| Anthropic / Anthropic.Foundry | `13.3.0` / `1.0.0` |
+| Anthropic | `13.3.0` |
 | Azure.Identity | `1.21.0` |
 | Azure.Core / System.ClientModel | `1.64.0` / `1.16.0` |
 | Markdig | `1.5.1` |
@@ -434,6 +440,15 @@ azd provision --preview
 ```
 
 The tests cover streaming, cancellation, retries, safe Markdown, catalog lookup, and telemetry privacy. Transport tests drive the actual SDKs through native tool-call streams and verify the tool-result follow-up requests without calling Azure.
+
+Registration tests cover both keyed clients, endpoint validation, credential selection, API-key alternatives, the compiled README setup and Anthropic's SDK-managed token refresh. Opt-in live tests are skipped by default. With endpoints and a specific CLI credential configured:
+
+```powershell
+$env:TASTE_TEST_RUN_LIVE = '1'
+dotnet test tests/TasteTest.Tests/TasteTest.Tests.csproj --filter Category=Live
+```
+
+The live checks require a streamed tool result and both model/tool spans from each SDK. Public-provider API-key inference is not part of those checks. The [draft Anthropic follow-up](docs/anthropic-credential-integration-issue.md) records the remaining registration/credential integration work; the sample does not wait on it.
 
 CI also tests both local launchers and compiles the Bicep template to check required browser authentication, tenant and audience restrictions, and secretless federation. See [Contributing](CONTRIBUTING.md) to run those checks locally.
 

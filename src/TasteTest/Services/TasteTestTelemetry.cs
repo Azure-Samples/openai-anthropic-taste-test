@@ -14,8 +14,8 @@ public static class TasteTestTelemetry
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
-        var console = configuration.GetValue<bool>("TASTE_TEST_TELEMETRY_CONSOLE");
-        var configuredEndpoint = configuration["OTEL_EXPORTER_OTLP_ENDPOINT"];
+        bool console = configuration.GetValue<bool>("TASTE_TEST_TELEMETRY_CONSOLE");
+        string? configuredEndpoint = configuration["OTEL_EXPORTER_OTLP_ENDPOINT"];
         Uri? endpoint = null;
         if (!string.IsNullOrEmpty(configuredEndpoint) &&
             (!Uri.TryCreate(configuredEndpoint, UriKind.Absolute, out endpoint) ||

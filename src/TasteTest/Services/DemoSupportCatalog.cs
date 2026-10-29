@@ -27,8 +27,8 @@ public static class DemoSupportCatalog
                 CancellationToken cancellationToken) =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var match = FindPlan(plan);
-                var result = new LookupResult(match,
+                SupportPlan? match = FindPlan(plan);
+                LookupResult result = new LookupResult(match,
                     match is null ? "Unknown support plan. Choose Business or Enterprise." : null);
                 await onLookup(result, cancellationToken).ConfigureAwait(false);
                 return result;

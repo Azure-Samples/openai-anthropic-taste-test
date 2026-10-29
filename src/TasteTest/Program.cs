@@ -1,15 +1,14 @@
-using Azure.Core;
-using Azure.Identity;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using TasteTest;
 using TasteTest.Components;
 using TasteTest.Services;
 
-var builder = WebApplication.CreateBuilder(args);
+WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
 // Bind and validate before the container is built so a misconfigured environment fails fast
 // with every problem listed, instead of failing on the first model call.
-var tasteTestOptions = TasteTestOptions.FromConfiguration(builder.Configuration);
+TasteTestOptions tasteTestOptions = TasteTestOptions.FromConfiguration(builder.Configuration);
 tasteTestOptions.Validate();
 
 builder.Services.AddSingleton(Options.Create(tasteTestOptions));
@@ -19,25 +18,48 @@ builder.Services.AddProblemDetails();
 builder.Services.AddHealthChecks();
 builder.Services.AddTasteTestTelemetry(builder.Configuration);
 
-// Streaming responses stay open far longer than the 100-second default, so the request's own
-// per-lane deadline and cancellation token bound each call instead of the client timeout.
-builder.Services.AddHttpClient(ModelClientNames.OpenAI)
-    .ConfigureHttpClient(static client => client.Timeout = Timeout.InfiniteTimeSpan);
-builder.Services.AddHttpClient(ModelClientNames.Anthropic)
-    .ConfigureHttpClient(static client => client.Timeout = Timeout.InfiniteTimeSpan);
-
-// Entra only. Locally this resolves a developer credential; in Container Apps it resolves the
-// user-assigned managed identity through AZURE_CLIENT_ID.
-builder.Services.AddSingleton<TokenCredential>(_ => new DefaultAzureCredential(
-    new DefaultAzureCredentialOptions { TenantId = builder.Configuration["AZURE_TENANT_ID"] }));
-
 if (tasteTestOptions.UseSampleResponses)
 {
-    builder.Services.AddSingleton<IModelChatClientFactory, SampleModelChatClientFactory>();
+    builder.Services.AddKeyedChatClient("gpt", new SampleChatClient(
+            ProviderKind.OpenAI, builder.Configuration["TasteTest:Gpt:Model"] ??
+                throw new InvalidOperationException("TasteTest:Gpt:Model is required.")))
+        .UseFunctionInvocation(configure: client =>
+        {
+            client.MaximumIterationsPerRequest = 4;
+            client.MaximumConsecutiveErrorsPerRequest = 4;
+        })
+        .UseOpenTelemetry(sourceName: TasteTestTelemetry.SourceName,
+            configure: telemetry => telemetry.EnableSensitiveData = false);
+    builder.Services.AddKeyedChatClient("claude", new SampleChatClient(
+            ProviderKind.Anthropic, builder.Configuration["TasteTest:Claude:Model"] ??
+                throw new InvalidOperationException("TasteTest:Claude:Model is required.")))
+        .UseFunctionInvocation(configure: client =>
+        {
+            client.MaximumIterationsPerRequest = 4;
+            client.MaximumConsecutiveErrorsPerRequest = 4;
+        })
+        .UseOpenTelemetry(sourceName: TasteTestTelemetry.SourceName,
+            configure: telemetry => telemetry.EnableSensitiveData = false);
 }
 else
 {
-    builder.Services.AddSingleton<IModelChatClientFactory, FoundryModelChatClientFactory>();
+    #region Snippet:KeyedChatClientSetup
+    builder.AddCredentialFromConfig("TasteTest:Credential");
+    builder.AddKeyedResponsesChatClient("gpt", "TasteTest:Gpt")
+        .UseFunctionInvocation(configure: client =>
+        {
+            client.MaximumIterationsPerRequest = 4;
+            client.MaximumConsecutiveErrorsPerRequest = 4;
+        })
+        .UseOpenTelemetry(sourceName: "TasteTest.Chat", configure: telemetry => telemetry.EnableSensitiveData = false);
+    builder.AddKeyedAnthropicChatClient("claude", "TasteTest:Claude")
+        .UseFunctionInvocation(configure: client =>
+        {
+            client.MaximumIterationsPerRequest = 4;
+            client.MaximumConsecutiveErrorsPerRequest = 4;
+        })
+        .UseOpenTelemetry(sourceName: "TasteTest.Chat", configure: telemetry => telemetry.EnableSensitiveData = false);
+    #endregion
 }
 
 builder.Services.AddSingleton<ILaneOrderRandomizer, CryptoLaneOrderRandomizer>();
@@ -45,7 +67,7 @@ builder.Services.AddSingleton<ILaneOrderRandomizer, CryptoLaneOrderRandomizer>()
 // Scoped to the Blazor circuit so lane order is randomized per visitor.
 builder.Services.AddScoped<TasteTestSession>();
 
-var app = builder.Build();
+WebApplication app = builder.Build();
 
 if (!app.Environment.IsDevelopment())
 {

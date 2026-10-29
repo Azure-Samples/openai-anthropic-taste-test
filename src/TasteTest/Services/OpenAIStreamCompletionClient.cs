@@ -11,14 +11,14 @@ internal sealed class OpenAIStreamCompletionClient(IChatClient innerClient) : De
         ChatOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        await foreach (var update in InnerClient.GetStreamingResponseAsync(messages, options, cancellationToken)
+        await foreach (ChatResponseUpdate update in InnerClient.GetStreamingResponseAsync(messages, options, cancellationToken)
             .ConfigureAwait(false))
         {
             // MEAI.OpenAI 10.11 forwards response.incomplete as raw metadata but omits its
             // finish reason and usage. Reuse its native conversion without replaying text.
             if (update.RawRepresentation is StreamingResponseIncompleteUpdate incomplete)
             {
-                var terminal = incomplete.Response.AsChatResponse();
+                ChatResponse terminal = incomplete.Response.AsChatResponse();
                 update.FinishReason ??= terminal.FinishReason;
                 if (terminal.Usage is { } usage && !update.Contents.Any(content => content is UsageContent))
                 {

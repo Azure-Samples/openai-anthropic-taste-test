@@ -33,7 +33,7 @@ public sealed class TasteTestLane
 
     internal TasteTestTurn BeginTurn(string prompt)
     {
-        var turn = new TasteTestTurn(prompt);
+        TasteTestTurn turn = new TasteTestTurn(prompt);
         _turns.Add(turn);
         return turn;
     }
