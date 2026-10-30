@@ -25,6 +25,7 @@ public sealed class TasteTestSession
     private readonly ILogger<TasteTestSession> _logger;
     private List<TasteTestLane> _lanes;
 
+    #region Snippet:KeyedChatClientConsumption
     public TasteTestSession(
         [FromKeyedServices("gpt")] IChatClient gpt,
         [FromKeyedServices("claude")] IChatClient claude,
@@ -45,6 +46,7 @@ public sealed class TasteTestSession
         _logger = logger;
         _lanes = CreateLanes();
     }
+    #endregion
 
     public IReadOnlyList<TasteTestLane> Lanes => _lanes;
 
@@ -117,8 +119,8 @@ public sealed class TasteTestSession
 
         try
         {
-            // Credential acquisition can block synchronously inside a vendor SDK. Keep it off
-            // the Blazor circuit so both lanes start independently and Cancel stays responsive.
+            // Isolate lane startup from the Blazor circuit so either lane can start and Cancel
+            // stays responsive even if a configured client does synchronous work before its first await.
             ChatResponse?[] responses = await Task.WhenAll(attempts.Select(attempt =>
                 Task.Run(() => StreamLaneAsync(
                     attempt.Lane, attempt.Turn, notifyProgress, cancellationToken), CancellationToken.None)));
@@ -244,6 +246,7 @@ public sealed class TasteTestSession
                 new(ChatRole.User, turn.Prompt)
             };
 
+            #region Snippet:SharedChatStreaming
             await foreach (ChatResponseUpdate update in client
                 .GetStreamingResponseAsync(messages, chatOptions, requestToken)
                 .ConfigureAwait(false))
@@ -271,6 +274,7 @@ public sealed class TasteTestSession
                 }
                 await notifyProgress(false);
             }
+            #endregion
 
             // ToChatResponse folds provider-specific usage content into one UsageDetails, so the
             // OpenAI Responses and Anthropic Messages token counts arrive in the same shape.
@@ -300,7 +304,7 @@ public sealed class TasteTestSession
             {
                 turn.Error = "The response reached its token limit before finishing. " +
                     "Reasoning can use this budget before any text appears. " +
-                    "Try a shorter question, or increase TASTE_TEST_MAX_OUTPUT_TOKENS and restart the app.";
+                    "Try a shorter question, or increase TasteTest:MaxOutputTokens and restart the app.";
                 return null;
             }
 

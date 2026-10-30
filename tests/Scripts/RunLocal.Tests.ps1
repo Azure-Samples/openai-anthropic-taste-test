@@ -12,6 +12,7 @@ $dotnet = Join-Path $fixture 'dotnet'
 $names = @(
     'TASTE_TEST_TELEMETRY_CONSOLE', 'OTEL_EXPORTER_OTLP_ENDPOINT',
     'TASTE_TEST_MAX_OUTPUT_TOKENS', 'TASTE_TEST_USE_SAMPLE_RESPONSES',
+    'TasteTest__MaxOutputTokens', 'TasteTest__UseSampleResponses',
     'MOCK_CONSOLE', 'MOCK_ENDPOINT', 'MOCK_BIN', 'MOCK_LAUNCHER', 'MOCK_SETTINGS',
     'TasteTest__Gpt__Options__Endpoint', 'TasteTest__Gpt__Model',
     'TasteTest__Claude__Options__Endpoint', 'TasteTest__Claude__Model'
@@ -58,8 +59,8 @@ function azd {
 function dotnet {
     "CONSOLE=$env:TASTE_TEST_TELEMETRY_CONSOLE"
     "ENDPOINT=$env:OTEL_EXPORTER_OTLP_ENDPOINT"
-    "TOKENS=$env:TASTE_TEST_MAX_OUTPUT_TOKENS"
-    "SAMPLE=$env:TASTE_TEST_USE_SAMPLE_RESPONSES"
+    "TOKENS=$env:TasteTest__MaxOutputTokens"
+    "SAMPLE=$env:TasteTest__UseSampleResponses"
     "GPT_ENDPOINT=$env:TasteTest__Gpt__Options__Endpoint"
     "GPT_MODEL=$env:TasteTest__Gpt__Model"
     "CLAUDE_ENDPOINT=$env:TasteTest__Claude__Options__Endpoint"
@@ -72,6 +73,9 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 "RESTORED_ENDPOINT=$env:OTEL_EXPORTER_OTLP_ENDPOINT"
 "RESTORED_CONSOLE_SET=$(Test-Path Env:TASTE_TEST_TELEMETRY_CONSOLE)"
 "RESTORED_ENDPOINT_SET=$(Test-Path Env:OTEL_EXPORTER_OTLP_ENDPOINT)"
+"RESTORED_TOKENS=$env:TasteTest__MaxOutputTokens"
+"RESTORED_TOKENS_SET=$(Test-Path Env:TasteTest__MaxOutputTokens)"
+"RESTORED_SAMPLE=$env:TasteTest__UseSampleResponses"
 '@, $encoding)
 
     [IO.File]::WriteAllText($azd, @'
@@ -86,7 +90,7 @@ printf '%s\n' "${MOCK_SETTINGS-}"
 #!/usr/bin/env bash
 printf 'CONSOLE=%s\nENDPOINT=%s\nTOKENS=%s\nSAMPLE=%s\n' \
   "${TASTE_TEST_TELEMETRY_CONSOLE-}" "${OTEL_EXPORTER_OTLP_ENDPOINT-}" \
-  "$TASTE_TEST_MAX_OUTPUT_TOKENS" "$TASTE_TEST_USE_SAMPLE_RESPONSES"
+  "$TasteTest__MaxOutputTokens" "$TasteTest__UseSampleResponses"
 printf 'GPT_ENDPOINT=%s\nGPT_MODEL=%s\nCLAUDE_ENDPOINT=%s\nCLAUDE_MODEL=%s\n' \
   "${TasteTest__Gpt__Options__Endpoint-}" "${TasteTest__Gpt__Model-}" \
   "${TasteTest__Claude__Options__Endpoint-}" "${TasteTest__Claude__Model-}"
@@ -133,6 +137,18 @@ printf 'GPT_ENDPOINT=%s\nGPT_MODEL=%s\nCLAUDE_ENDPOINT=%s\nCLAUDE_MODEL=%s\n' \
             Settings = "AZURE_FOUNDRY_ENDPOINT=`"https://legacy.example.test`"`nGPT_ENDPOINT=`"https://dedicated.example.test/v1/`"`nCLAUDE_ENDPOINT=`"https://dedicated.example.test/`""
             GptEndpoint = 'https://dedicated.example.test/v1/'
             ClaudeEndpoint = 'https://dedicated.example.test/'
+        },
+        @{
+            Name = 'Hierarchical request settings beat azd output aliases'
+            SavedConsole = 'false'; SavedEndpoint = ''; ExpectedConsole = 'false'; ExpectedEndpoint = ''
+            Settings = "TasteTest__MaxOutputTokens=`"2048`"`nTasteTest__UseSampleResponses=`"true`""
+            ExpectedTokens = '2048'
+        },
+        @{
+            Name = 'Process request setting beats saved config and aliases'
+            SavedConsole = 'false'; SavedEndpoint = ''; ExpectedConsole = 'false'; ExpectedEndpoint = ''
+            Settings = "TasteTest__MaxOutputTokens=`"2048`""
+            ProcessTokens = '1024'; ExpectedTokens = '1024'
         }
     )
 
@@ -141,6 +157,9 @@ printf 'GPT_ENDPOINT=%s\nGPT_MODEL=%s\nCLAUDE_ENDPOINT=%s\nCLAUDE_MODEL=%s\n' \
         Set-ProcessVariable 'OTEL_EXPORTER_OTLP_ENDPOINT' $case.Endpoint
         $env:TASTE_TEST_MAX_OUTPUT_TOKENS = '512'
         $env:TASTE_TEST_USE_SAMPLE_RESPONSES = 'true'
+        Set-ProcessVariable 'TasteTest__MaxOutputTokens' $case.ProcessTokens
+        $env:TasteTest__UseSampleResponses = 'true'
+        $expectedTokens = if ($case.ExpectedTokens) { $case.ExpectedTokens } else { '8192' }
         $env:MOCK_CONSOLE = $case.SavedConsole
         $env:MOCK_ENDPOINT = $case.SavedEndpoint
         $env:MOCK_SETTINGS = $case.Settings
@@ -153,7 +172,7 @@ printf 'GPT_ENDPOINT=%s\nGPT_MODEL=%s\nCLAUDE_ENDPOINT=%s\nCLAUDE_MODEL=%s\n' \
         if ($LASTEXITCODE -ne 0) { throw "PowerShell launcher failed: $($case.Name)." }
         Assert-Capture $output 'CONSOLE' $case.ExpectedConsole
         Assert-Capture $output 'ENDPOINT' $case.ExpectedEndpoint
-        Assert-Capture $output 'TOKENS' '8192'
+        Assert-Capture $output 'TOKENS' $expectedTokens
         Assert-Capture $output 'SAMPLE' 'false'
         Assert-Capture $output 'GPT_ENDPOINT' $case.GptEndpoint
         Assert-Capture $output 'GPT_MODEL' $case.GptModel
@@ -163,12 +182,15 @@ printf 'GPT_ENDPOINT=%s\nGPT_MODEL=%s\nCLAUDE_ENDPOINT=%s\nCLAUDE_MODEL=%s\n' \
         Assert-Capture $output 'RESTORED_ENDPOINT' $case.Endpoint
         Assert-Capture $output 'RESTORED_CONSOLE_SET' ($null -ne $case.Console)
         Assert-Capture $output 'RESTORED_ENDPOINT_SET' ($null -ne $case.Endpoint)
+        Assert-Capture $output 'RESTORED_TOKENS' $case.ProcessTokens
+        Assert-Capture $output 'RESTORED_TOKENS_SET' ($null -ne $case.ProcessTokens)
+        Assert-Capture $output 'RESTORED_SAMPLE' 'true'
 
         $output = @(& $bash -c 'chmod +x "$MOCK_BIN/azd" "$MOCK_BIN/dotnet" && export PATH="$MOCK_BIN:$PATH" && exec bash "$MOCK_LAUNCHER"')
         if ($LASTEXITCODE -ne 0) { throw "Bash launcher failed: $($case.Name)." }
         Assert-Capture $output 'CONSOLE' $case.ExpectedConsole
         Assert-Capture $output 'ENDPOINT' $case.ExpectedEndpoint
-        Assert-Capture $output 'TOKENS' '8192'
+        Assert-Capture $output 'TOKENS' $expectedTokens
         Assert-Capture $output 'SAMPLE' 'false'
         Assert-Capture $output 'GPT_ENDPOINT' $case.GptEndpoint
         Assert-Capture $output 'GPT_MODEL' $case.GptModel

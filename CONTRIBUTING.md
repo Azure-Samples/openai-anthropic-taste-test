@@ -40,8 +40,9 @@ sign-in, the single-tenant issuer and audience, the health-probe exception, and 
 federation without client secrets. It does not replace testing browser sign-in after deployment.
 
 Client-registration changes must keep both providers keyed and configuration-driven. OpenAI
-settings bind through the official SDK registration API. The README setup is extracted from a
-compiled region in `Program.cs` and compared by a test. Keep endpoint/authentication behavior
+settings bind through the official SDK registration API, using Azure.Identity's native
+credential resolver. All README `Snippet:` blocks are checked against compiled source regions.
+Keep endpoint/authentication behavior
 covered by `ChatClientRegistrationTests`; run `Category=Live` only with explicitly configured
 endpoints and CLI credentials.
 

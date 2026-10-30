@@ -43,19 +43,12 @@ public sealed class TasteTestOptions
         "Use the demo catalog to choose a support plan for 80 seats. We need 24/7 coverage and a response within two hours. Compare Business and Enterprise, including monthly cost."
     ];
 
-    /// <summary>Binds the options section and applies the flat variables written by <c>azd</c>.</summary>
+    /// <summary>Binds application settings using the host's normal configuration precedence.</summary>
     public static TasteTestOptions FromConfiguration(IConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(configuration);
 
-        TasteTestOptions options = configuration.GetSection(SectionName).Get<TasteTestOptions>() ?? new TasteTestOptions();
-
-        options.UseSampleResponses =
-            configuration.GetValue<bool?>("TASTE_TEST_USE_SAMPLE_RESPONSES") ?? options.UseSampleResponses;
-        options.MaxOutputTokens =
-            configuration.GetValue<int?>("TASTE_TEST_MAX_OUTPUT_TOKENS") ?? options.MaxOutputTokens;
-
-        return options;
+        return configuration.GetSection(SectionName).Get<TasteTestOptions>() ?? new TasteTestOptions();
     }
 
     /// <summary>Returns every configuration problem so one restart reports all of them.</summary>

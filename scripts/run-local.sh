@@ -20,7 +20,7 @@ while IFS='=' read -r name value; do
     TasteTest__*)
       set_config_default "$name" "$value"
       ;;
-    TASTE_TEST_MAX_OUTPUT_TOKENS|TASTE_TEST_TELEMETRY_CONSOLE|OTEL_EXPORTER_OTLP_ENDPOINT)
+    TASTE_TEST_TELEMETRY_CONSOLE|OTEL_EXPORTER_OTLP_ENDPOINT)
       if [[ "$name" == TASTE_TEST_TELEMETRY_CONSOLE && "$telemetry_console_override" == x ]] ||
          [[ "$name" == OTEL_EXPORTER_OTLP_ENDPOINT && "$otlp_endpoint_override" == x ]]; then
         continue
@@ -40,6 +40,7 @@ while IFS='=' read -r name value; do
     AOAI_DEPLOYMENT_NAME) set_config_default TasteTest__Gpt__Model "$value" ;;
     CLAUDE_DEPLOYMENT_NAME) set_config_default TasteTest__Claude__Model "$value" ;;
     AZURE_TENANT_ID) set_config_default TasteTest__Credential__TenantId "$value" ;;
+    TASTE_TEST_MAX_OUTPUT_TOKENS) set_config_default TasteTest__MaxOutputTokens "$value" ;;
     AZURE_FOUNDRY_ENDPOINT) legacy_endpoint="$value" ;;
   esac
 done <<< "$values"
@@ -47,5 +48,5 @@ if [[ -n "$legacy_endpoint" ]]; then
   set_config_default TasteTest__Gpt__Options__Endpoint "${legacy_endpoint%/}/openai/v1/"
   set_config_default TasteTest__Claude__Options__Endpoint "${legacy_endpoint%/}/anthropic/"
 fi
-export TASTE_TEST_USE_SAMPLE_RESPONSES=false
+export TasteTest__UseSampleResponses=false
 exec dotnet run --project ./src/TasteTest --launch-profile http

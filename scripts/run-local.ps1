@@ -6,18 +6,16 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $variableNames = @(
     'TasteTest__Credential__CredentialSource',
-    'TasteTest__Credential__ManagedIdentityIdKind',
-    'TasteTest__Credential__ClientId',
     'TasteTest__Credential__TenantId',
     'TasteTest__Credential__Scope',
     'TasteTest__Gpt__Options__Endpoint',
     'TasteTest__Gpt__Model',
     'TasteTest__Claude__Options__Endpoint',
     'TasteTest__Claude__Model',
-    'TASTE_TEST_MAX_OUTPUT_TOKENS',
+    'TasteTest__MaxOutputTokens',
+    'TasteTest__UseSampleResponses',
     'TASTE_TEST_TELEMETRY_CONSOLE',
-    'OTEL_EXPORTER_OTLP_ENDPOINT',
-    'TASTE_TEST_USE_SAMPLE_RESPONSES'
+    'OTEL_EXPORTER_OTLP_ENDPOINT'
 )
 $previousValues = @{}
 $processOverrides = @($variableNames | Where-Object {
@@ -54,6 +52,7 @@ try {
         'AOAI_DEPLOYMENT_NAME' = 'TasteTest__Gpt__Model'
         'CLAUDE_DEPLOYMENT_NAME' = 'TasteTest__Claude__Model'
         'AZURE_TENANT_ID' = 'TasteTest__Credential__TenantId'
+        'TASTE_TEST_MAX_OUTPUT_TOKENS' = 'TasteTest__MaxOutputTokens'
     }
     foreach ($output in $outputs.GetEnumerator()) {
         if ($settings.ContainsKey($output.Key)) { $mapped[$output.Value] = $settings[$output.Key] }
@@ -77,7 +76,7 @@ try {
         }
     }
 
-    $env:TASTE_TEST_USE_SAMPLE_RESPONSES = 'false'
+    $env:TasteTest__UseSampleResponses = 'false'
     dotnet run --project ./src/TasteTest --launch-profile http
     $exitCode = $LASTEXITCODE
 }

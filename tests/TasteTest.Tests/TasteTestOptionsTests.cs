@@ -23,35 +23,46 @@ public sealed class TasteTestOptionsTests
     }
 
     [Fact]
-    public void FromConfiguration_UsesAzdEnvironmentVariables()
+    public void FromConfiguration_BindsHierarchicalSettings()
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["TASTE_TEST_MAX_OUTPUT_TOKENS"] = "512"
+                ["TasteTest:MaxOutputTokens"] = "512",
+                ["TasteTest:UseSampleResponses"] = "true"
             })
             .Build();
 
         var options = TasteTestOptions.FromConfiguration(configuration);
 
         Assert.Equal(512, options.MaxOutputTokens);
+        Assert.True(options.UseSampleResponses);
     }
 
     [Fact]
-    public void FromConfiguration_PrefersEnvironmentVariablesOverSectionValues()
+    public void FromConfiguration_PreservesProviderAndCommandLinePrecedence()
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                [$"{TasteTestOptions.SectionName}:MaxOutputTokens"] = "4096",
-                [$"{TasteTestOptions.SectionName}:MaxPromptCharacters"] = "1234",
-                ["TASTE_TEST_MAX_OUTPUT_TOKENS"] = "512"
+                ["TasteTest:MaxOutputTokens"] = "4096",
+                ["TasteTest:MaxPromptCharacters"] = "1234",
+                ["TasteTest:UseSampleResponses"] = "false",
+                ["TASTE_TEST_MAX_OUTPUT_TOKENS"] = "512",
+                ["TASTE_TEST_USE_SAMPLE_RESPONSES"] = "false"
             })
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TasteTest:MaxOutputTokens"] = "1024",
+                ["TasteTest:UseSampleResponses"] = "true"
+            })
+            .AddCommandLine(["--TasteTest:MaxOutputTokens", "2048"])
             .Build();
 
         var options = TasteTestOptions.FromConfiguration(configuration);
 
-        Assert.Equal(512, options.MaxOutputTokens);
+        Assert.Equal(2048, options.MaxOutputTokens);
+        Assert.True(options.UseSampleResponses);
         Assert.Equal(1234, options.MaxPromptCharacters);
     }
 
@@ -97,8 +108,8 @@ public sealed class TasteTestOptionsTests
     }
 
     [Theory]
-    [InlineData("TASTE_TEST_USE_SAMPLE_RESPONSES", "not-a-boolean")]
-    [InlineData("TASTE_TEST_MAX_OUTPUT_TOKENS", "not-a-number")]
+    [InlineData("TasteTest:UseSampleResponses", "not-a-boolean")]
+    [InlineData("TasteTest:MaxOutputTokens", "not-a-number")]
     public void FromConfiguration_RejectsMalformedOverrides(string key, string value)
     {
         var configuration = new ConfigurationBuilder()

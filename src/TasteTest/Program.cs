@@ -1,3 +1,4 @@
+using Azure.Identity;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using TasteTest;
@@ -20,46 +21,23 @@ builder.Services.AddTasteTestTelemetry(builder.Configuration);
 
 if (tasteTestOptions.UseSampleResponses)
 {
-    builder.Services.AddKeyedChatClient("gpt", new SampleChatClient(
+    ConfigureChatClient(builder.Services.AddKeyedChatClient("gpt", new SampleChatClient(
             ProviderKind.OpenAI, builder.Configuration["TasteTest:Gpt:Model"] ??
-                throw new InvalidOperationException("TasteTest:Gpt:Model is required.")))
-        .UseFunctionInvocation(configure: client =>
-        {
-            client.MaximumIterationsPerRequest = 4;
-            client.MaximumConsecutiveErrorsPerRequest = 4;
-        })
-        .UseOpenTelemetry(sourceName: TasteTestTelemetry.SourceName,
-            configure: telemetry => telemetry.EnableSensitiveData = false);
-    builder.Services.AddKeyedChatClient("claude", new SampleChatClient(
+                throw new InvalidOperationException("TasteTest:Gpt:Model is required."))));
+    ConfigureChatClient(builder.Services.AddKeyedChatClient("claude", new SampleChatClient(
             ProviderKind.Anthropic, builder.Configuration["TasteTest:Claude:Model"] ??
-                throw new InvalidOperationException("TasteTest:Claude:Model is required.")))
-        .UseFunctionInvocation(configure: client =>
-        {
-            client.MaximumIterationsPerRequest = 4;
-            client.MaximumConsecutiveErrorsPerRequest = 4;
-        })
-        .UseOpenTelemetry(sourceName: TasteTestTelemetry.SourceName,
-            configure: telemetry => telemetry.EnableSensitiveData = false);
+                throw new InvalidOperationException("TasteTest:Claude:Model is required."))));
 }
 else
 {
+    // Azure.Identity's credential resolver/configuration integration is intentionally experimental.
+    #pragma warning disable SCME0002
     #region Snippet:KeyedChatClientSetup
-    builder.AddCredentialFromConfig("TasteTest:Credential");
-    builder.AddKeyedResponsesChatClient("gpt", "TasteTest:Gpt")
-        .UseFunctionInvocation(configure: client =>
-        {
-            client.MaximumIterationsPerRequest = 4;
-            client.MaximumConsecutiveErrorsPerRequest = 4;
-        })
-        .UseOpenTelemetry(sourceName: "TasteTest.Chat", configure: telemetry => telemetry.EnableSensitiveData = false);
-    builder.AddKeyedAnthropicChatClient("claude", "TasteTest:Claude")
-        .UseFunctionInvocation(configure: client =>
-        {
-            client.MaximumIterationsPerRequest = 4;
-            client.MaximumConsecutiveErrorsPerRequest = 4;
-        })
-        .UseOpenTelemetry(sourceName: "TasteTest.Chat", configure: telemetry => telemetry.EnableSensitiveData = false);
+    builder.AddAzureCredentialResolver();
+    ConfigureChatClient(builder.AddKeyedResponsesChatClient("gpt", "TasteTest:Gpt"));
+    ConfigureChatClient(builder.AddKeyedAnthropicChatClient("claude", "TasteTest:Claude"));
     #endregion
+    #pragma warning restore SCME0002
 }
 
 builder.Services.AddSingleton<ILaneOrderRandomizer, CryptoLaneOrderRandomizer>();
@@ -84,6 +62,18 @@ app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 
 app.Run();
+
+#region Snippet:ChatClientMiddleware
+static void ConfigureChatClient(ChatClientBuilder client)
+{
+    client.UseFunctionInvocation(configure: invocation =>
+        {
+            invocation.MaximumIterationsPerRequest = 4;
+            invocation.MaximumConsecutiveErrorsPerRequest = 4;
+        })
+        .UseOpenTelemetry(sourceName: "TasteTest.Chat", configure: telemetry => telemetry.EnableSensitiveData = false);
+}
+#endregion
 
 /// <summary>Exposed so integration tests can host the application with <c>WebApplicationFactory</c>.</summary>
 public partial class Program;

@@ -2,7 +2,6 @@
 // with Entra credentials. Client construction and protocol handling stay in the official SDKs.
 using System.ClientModel;
 using System.ClientModel.Primitives;
-using System.Diagnostics.CodeAnalysis;
 using Anthropic;
 using Anthropic.Credentials;
 using Azure.Core;
@@ -19,63 +18,25 @@ namespace TasteTest.Services;
 #pragma warning disable SCME0002
 public static class ChatClientRegistration
 {
-    public static void AddCredentialFromConfig(this IHostApplicationBuilder builder, string sectionName)
-    {
-        IConfigurationSection section = builder.Configuration.GetRequiredSection(sectionName);
-        string source = Required(section, "CredentialSource");
-        Required(section, "Scope");
-        if (source is not ("ManagedIdentityCredential" or "AzureCliCredential" or "AzureDeveloperCliCredential"))
-        {
-            throw new InvalidOperationException($"{sectionName}:CredentialSource must select an explicit managed-identity or CLI credential.");
-        }
-        string? clientId = section["ClientId"];
-        string? tenantId = string.IsNullOrWhiteSpace(section["TenantId"]) ? null : section["TenantId"];
-        if (source == "ManagedIdentityCredential" &&
-            section["ManagedIdentityIdKind"] is string kind && kind != "ClientId")
-        {
-            throw new InvalidOperationException($"{sectionName}:ManagedIdentityIdKind must be ClientId.");
-        }
-
-        builder.Services.AddKeyedSingleton<TokenCredential>(sectionName, (_, _) => source switch
-        {
-            "ManagedIdentityCredential" => new ManagedIdentityCredential(
-                string.IsNullOrWhiteSpace(clientId)
-                    ? ManagedIdentityId.SystemAssigned
-                    : ManagedIdentityId.FromUserAssignedClientId(clientId)),
-            "AzureCliCredential" => new AzureCliCredential(new AzureCliCredentialOptions { TenantId = tenantId }),
-            "AzureDeveloperCliCredential" => new AzureDeveloperCliCredential(new AzureDeveloperCliCredentialOptions { TenantId = tenantId }),
-            _ => throw new InvalidOperationException("Unsupported credential source.")
-        });
-        builder.Services.AddSingleton<CredentialResolver>(services =>
-            new ConfiguredCredentialResolver(sectionName,
-                services.GetRequiredKeyedService<TokenCredential>(sectionName)));
-    }
-
     public static ChatClientBuilder AddKeyedResponsesChatClient(
         this IHostApplicationBuilder builder, string serviceKey, string sectionName, HttpClient? httpClient = null)
     {
         IConfigurationSection section = builder.Configuration.GetRequiredSection(sectionName);
         ValidateEndpoint(section);
         string model = Required(section, "Model");
-        string? apiKey = section["ApiKey"];
-        ValidateAuthentication(section, apiKey);
+        ValidateAuthentication(builder.Configuration, section);
 
         // Native binding creates the SCM BearerTokenPolicy from the resolved credential and scope.
-        IClientBuilder native = builder.AddKeyedResponsesClient(serviceKey, sectionName);
-        native.PostConfigure(settings =>
+        if (httpClient is null)
         {
-            ResponsesClientSettings responses = (ResponsesClientSettings)settings;
-            if (!string.IsNullOrWhiteSpace(apiKey))
-            {
-                // The SDK schema nests key auth under Credential; the sample exposes ApiKey as its alternative.
-                responses.Credential = new CredentialSettings(section) { CredentialSource = "ApiKey", Key = apiKey };
-                responses.CredentialProvider = null;
-            }
-            if (httpClient is not null)
-            {
-                responses.Options.Transport = new HttpClientPipelineTransport(httpClient);
-            }
-        });
+            builder.AddKeyedResponsesClient(serviceKey, sectionName);
+        }
+        else
+        {
+            // Same SDK binder, with its settings callback supplying the test transport.
+            builder.AddKeyedClient<ResponsesClient, ResponsesClientSettings>(serviceKey, sectionName,
+                settings => settings.Options.Transport = new HttpClientPipelineTransport(httpClient));
+        }
 
         return builder.Services.AddKeyedChatClient(serviceKey, services =>
             new OpenAIStreamCompletionClient(
@@ -96,22 +57,31 @@ public static class ChatClientRegistration
         IConfigurationSection section = builder.Configuration.GetRequiredSection(sectionName);
         Uri endpoint = ValidateEndpoint(section);
         string model = Required(section, "Model");
-        string? apiKey = section["ApiKey"];
-        string? credentialPath = ValidateAuthentication(section, apiKey);
+        string credentialPath = ValidateAuthentication(builder.Configuration, section);
 
         builder.Services.AddKeyedSingleton<AnthropicClient>(serviceKey, (services, _) =>
         {
+            CredentialSettings credential = builder.Configuration.GetAzureCredentialSettings(
+                credentialPath, [.. services.GetServices<CredentialResolver>()]) ??
+                throw new InvalidOperationException($"{credentialPath} could not be resolved.");
             AnthropicClientOptions options = new()
             {
                 BaseUrl = endpoint.AbsoluteUri.TrimEnd('/'),
-                ApiKey = apiKey,
+                ApiKey = null,
                 AuthToken = null
             };
-            if (credentialPath is not null)
+            if (!string.IsNullOrWhiteSpace(credential.Key))
+            {
+                options.ApiKey = credential.Key;
+            }
+            else if (credential.TokenProvider is TokenCredential tokenCredential)
             {
                 string scope = Required(builder.Configuration.GetRequiredSection(credentialPath), "Scope");
-                options.Credentials = new EntraAccessTokenProvider(
-                    services.GetRequiredKeyedService<TokenCredential>(credentialPath), scope);
+                options.Credentials = new EntraAccessTokenProvider(tokenCredential, scope);
+            }
+            else
+            {
+                throw new InvalidOperationException($"{credentialPath} must resolve to an API key or an Azure.Identity credential.");
             }
             if (httpClient is not null) { options.HttpClient = httpClient; }
             return new AnthropicClient(options);
@@ -138,33 +108,30 @@ public static class ChatClientRegistration
         return endpoint;
     }
 
-    private static string? ValidateAuthentication(IConfigurationSection section, string? apiKey)
+    private static string ValidateAuthentication(IConfiguration configuration, IConfigurationSection section)
     {
-        string? reference = section["Credential"];
-        if (!string.IsNullOrWhiteSpace(apiKey))
+        IConfigurationSection credentialSection = section.GetSection("Credential");
+        string credentialPath = credentialSection.Path;
+        if (credentialSection.Value is string reference)
         {
-            if (!string.IsNullOrWhiteSpace(reference))
+            if (!reference.StartsWith('$') || reference.Length == 1 || credentialSection.GetChildren().Any())
             {
-                throw new InvalidOperationException($"{section.Path} must set ApiKey or Credential, not both.");
+                throw new InvalidOperationException($"{credentialPath} must be a credential section or a $ reference, not both. " +
+                    "Replace the $ reference before adding inline credential fields.");
             }
-            return null;
+            credentialPath = reference[1..];
         }
-        if (string.IsNullOrWhiteSpace(reference) || !reference.StartsWith('$') || reference.Length == 1)
+        IConfigurationSection credential = configuration.GetRequiredSection(credentialPath);
+        string source = Required(credential, "CredentialSource");
+        if (source is "ApiKey" or "ApiKeyCredential")
         {
-            throw new InvalidOperationException($"{section.Path}:Credential must reference a registered credential section using $.");
+            Required(credential, "Key");
         }
-        return reference[1..];
-    }
-
-    private sealed class ConfiguredCredentialResolver(string path, TokenCredential credential) : CredentialResolver
-    {
-        public override bool TryResolve(
-            IConfigurationSection section, [NotNullWhen(true)] out AuthenticationTokenProvider? tokenProvider)
+        else
         {
-            bool matches = string.Equals(section.Path, path, StringComparison.OrdinalIgnoreCase);
-            tokenProvider = matches ? credential : null;
-            return matches;
+            Required(credential, "Scope");
         }
+        return credentialPath;
     }
 
     internal sealed class EntraAccessTokenProvider(TokenCredential credential, string scope) : IAccessTokenProvider
@@ -177,7 +144,7 @@ public static class ChatClientRegistration
             return new AnthropicAccessToken(token.Token, token.ExpiresOn.ToUnixTimeSeconds());
         }
 
-        // DI owns the TokenCredential; the SDK owns this stateless adapter and its token cache.
+        // Do not dispose the shared credential; the SDK owns this adapter and its token cache.
         public void Dispose() { }
     }
 }

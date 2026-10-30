@@ -33,9 +33,9 @@ possible:
 
 ## Hard rules
 
-- Use Microsoft Entra authentication for Azure deployments. Never request, create, print, or
-  store API keys. The provider-only registration helpers also support user-configured keys for
-  public provider APIs; do not use that mode to bypass Azure RBAC or enable account keys.
+- Use Microsoft Entra authentication for Azure deployments; never enable account keys or bypass RBAC.
+  For optional public-provider API-key configuration, use user-supplied values through environment
+  variables or user secrets. Never request, generate, print, log, or commit API keys.
 - Keep model clients host-independent: only the official OpenAI and Anthropic SDKs, Azure.Identity
   credentials and MEAI. Register keyed `IChatClient` services from configuration; use explicit
   types in setup examples and do not introduce a default credential chain.
@@ -159,8 +159,9 @@ azd provision --no-prompt
 The application selects a specific credential from `TasteTest:Credential:CredentialSource`.
 Development configuration uses `AzureCliCredential`; set
 `TasteTest__Credential__CredentialSource=AzureDeveloperCliCredential` to use cached `azd`
-authentication instead. Azure hosting selects `ManagedIdentityCredential` and supplies its client ID
-through the same configuration. Reuse a cached credential for the target tenant rather than prompting
+authentication instead. Both providers use Azure.Identity's native credential resolver and schema.
+Azure hosting selects `ManagedIdentityCredential`; the resolver reads the user-assigned identity from
+`AZURE_CLIENT_ID`. Reuse a cached credential for the target tenant rather than prompting
 for another login. Only if no usable credential exists, use browser-based Azure CLI login:
 
 ```powershell
@@ -206,6 +207,9 @@ verification below.
     must not be captured. Keep telemetry private and off-screen until reveal.
     Explicit shell telemetry variables override saved azd values in both local launchers;
     `false` disables console export and an explicitly empty endpoint disables OTLP.
+14. Application settings use `TasteTest__MaxOutputTokens` and `TasteTest__UseSampleResponses`.
+    The launchers translate azd's `TASTE_TEST_MAX_OUTPUT_TOKENS` output to the hierarchical name;
+    do not add flat-key overrides in application code.
 
 For a direct Claude smoke test, use the provisioned endpoint and deployment from
 `azd env get-values`. Acquire an Entra token for `https://ai.azure.com/.default`, POST a minimal

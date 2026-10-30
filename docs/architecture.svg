@@ -191,7 +191,7 @@
   <!-- Footer -->
   <g transform="translate(820 662)" text-anchor="middle">
     <text font-size="14.5" fill="#5A6B7C">
-      <tspan font-weight="700" fill="#0A2540">Swap models without rewriting the app</tspan>
+      <tspan font-weight="700" fill="#0A2540">Swap models and providers without rewriting the app</tspan>
       <tspan dx="10">&#183;</tspan>
       <tspan dx="10" font-weight="700" fill="#0A2540">Entra ID</tspan> locally &#183; managed identity in Azure
       <tspan dx="10">&#183;</tspan>

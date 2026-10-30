@@ -1,3 +1,6 @@
+using System.ClientModel;
+using System.ClientModel.Primitives;
+using System.Diagnostics.CodeAnalysis;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
@@ -14,13 +17,13 @@ using TasteTest.Services;
 
 namespace TasteTest.Tests;
 
+// Exercise the experimental SDK config/DI contracts used by the sample.
+#pragma warning disable SCME0002
 public sealed class ChatClientRegistrationTests
 {
     internal static Dictionary<string, string?> Configuration() => new()
     {
         ["TasteTest:Credential:CredentialSource"] = "ManagedIdentityCredential",
-        ["TasteTest:Credential:ManagedIdentityIdKind"] = "ClientId",
-        ["TasteTest:Credential:TenantId"] = "",
         ["TasteTest:Credential:Scope"] = "https://ai.azure.com/.default",
         ["TasteTest:Gpt:Credential"] = "$TasteTest:Credential",
         ["TasteTest:Gpt:Model"] = "gpt-test",
@@ -34,28 +37,48 @@ public sealed class ChatClientRegistrationTests
     [InlineData("ManagedIdentityCredential", typeof(ManagedIdentityCredential))]
     [InlineData("AzureCliCredential", typeof(AzureCliCredential))]
     [InlineData("AzureDeveloperCliCredential", typeof(AzureDeveloperCliCredential))]
-    public void CredentialSource_IsAnExplicitConfigChoice(string source, Type expectedType)
+    public void CredentialSource_UsesTheNativeAzureResolver(string source, Type expectedType)
     {
         Dictionary<string, string?> configuration = Configuration();
         configuration["TasteTest:Credential:CredentialSource"] = source;
         HostApplicationBuilder builder = CreateBuilder(configuration);
-        builder.AddCredentialFromConfig("TasteTest:Credential");
+        builder.AddAzureCredentialResolver();
         using ServiceProvider services = builder.Services.BuildServiceProvider();
 
-        Assert.IsType(expectedType, services.GetRequiredKeyedService<TokenCredential>("TasteTest:Credential"));
+        CredentialSettings? credential = builder.Configuration.GetAzureCredentialSettings(
+            "TasteTest:Credential", [.. services.GetServices<CredentialResolver>()]);
+        Assert.NotNull(credential);
+        Assert.IsType(expectedType, credential.TokenProvider);
     }
 
     [Theory]
     [InlineData("DefaultAzureCredential")]
     [InlineData("UnrecognizedCredential")]
     [InlineData("")]
-    public void CredentialSource_RejectsImplicitOrUnknownChains(string source)
+    public void NativeAzureResolver_DoesNotSelectImplicitOrUnknownChains(string source)
     {
         Dictionary<string, string?> configuration = Configuration();
         configuration["TasteTest:Credential:CredentialSource"] = source;
         HostApplicationBuilder builder = CreateBuilder(configuration);
 
-        Assert.Throws<InvalidOperationException>(() => builder.AddCredentialFromConfig("TasteTest:Credential"));
+        Assert.False(AzureCredentialResolver.Default.TryResolve(
+            builder.Configuration.GetRequiredSection("TasteTest:Credential"), out _));
+    }
+
+    [Fact]
+    public void ManagedIdentity_AcceptsTheNativeExplicitIdentitySchema()
+    {
+        Dictionary<string, string?> configuration = Configuration();
+        configuration["TasteTest:Credential:ManagedIdentityIdKind"] = "ClientId";
+        configuration["TasteTest:Credential:ManagedIdentityId"] = "00000000-0000-0000-0000-000000000001";
+        HostApplicationBuilder builder = CreateBuilder(configuration);
+        builder.AddAzureCredentialResolver();
+        using ServiceProvider services = builder.Services.BuildServiceProvider();
+
+        CredentialSettings? credential = builder.Configuration.GetAzureCredentialSettings(
+            "TasteTest:Credential", [.. services.GetServices<CredentialResolver>()]);
+
+        Assert.IsType<ManagedIdentityCredential>(credential?.TokenProvider);
     }
 
     [Fact]
@@ -67,8 +90,7 @@ public sealed class ChatClientRegistrationTests
         using HttpClient gptHttp = new(gptTransport);
         using HttpClient claudeHttp = new(claudeTransport);
         HostApplicationBuilder builder = CreateBuilder(Configuration());
-        builder.AddCredentialFromConfig("TasteTest:Credential");
-        builder.Services.AddKeyedSingleton<TokenCredential>("TasteTest:Credential", credential);
+        TestCredentialResolver resolver = AddTestCredentialResolver(builder, credential);
         builder.AddKeyedResponsesChatClient("gpt", "TasteTest:Gpt", gptHttp);
         builder.AddKeyedAnthropicChatClient("claude", "TasteTest:Claude", claudeHttp);
         using ServiceProvider services = builder.Services.BuildServiceProvider();
@@ -89,16 +111,41 @@ public sealed class ChatClientRegistrationTests
         Assert.Equal("Bearer", Assert.Single(claudeTransport.Authorization).Scheme);
         Assert.All(credential.Scopes, scopes => Assert.Equal(["https://ai.azure.com/.default"], scopes));
         Assert.Null(services.GetRequiredKeyedService<AnthropicClient>("claude").ApiKey);
+        Assert.Equal(1, resolver.Resolutions);
+    }
+
+    [Theory]
+    [InlineData("gpt", "TasteTest:Gpt", "ApiKey")]
+    [InlineData("gpt", "TasteTest:Gpt", "ApiKeyCredential")]
+    [InlineData("claude", "TasteTest:Claude", "ApiKey")]
+    [InlineData("claude", "TasteTest:Claude", "ApiKeyCredential")]
+    public async Task ApiKey_UsesTheNativeInlineCredentialSchema(string key, string section, string source)
+    {
+        Dictionary<string, string?> configuration = Configuration();
+        configuration[section + ":Credential"] = null;
+        configuration[section + ":Credential:CredentialSource"] = source;
+        configuration[section + ":Credential:Key"] = "not-a-real-api-key";
+        HostApplicationBuilder builder = CreateBuilder(configuration);
+        using ResponseHandler transport = new(key == "gpt" ? "gpt-test" : "claude-test");
+        using HttpClient http = new(transport);
+        Register(builder, key, section, http);
+        using ServiceProvider services = builder.Services.BuildServiceProvider();
+
+        await services.GetRequiredKeyedService<IChatClient>(key)
+            .GetResponseAsync([new ChatMessage(ChatRole.User, "Hello")]);
+
+        Assert.Equal("not-a-real-api-key", Assert.Single(transport.Authorization).Parameter);
     }
 
     [Theory]
     [InlineData("gpt", "TasteTest:Gpt")]
     [InlineData("claude", "TasteTest:Claude")]
-    public async Task ApiKey_IsAnAlternativeToCredentialConfiguration(string key, string section)
+    public async Task ApiKey_CanUseASharedCredentialReference(string key, string section)
     {
         Dictionary<string, string?> configuration = Configuration();
-        configuration[section + ":Credential"] = null;
-        configuration[section + ":ApiKey"] = "not-a-real-api-key";
+        configuration["TasteTest:Credential:CredentialSource"] = "ApiKey";
+        configuration["TasteTest:Credential:Key"] = "not-a-real-api-key";
+        configuration.Remove("TasteTest:Credential:Scope");
         HostApplicationBuilder builder = CreateBuilder(configuration);
         using ResponseHandler transport = new(key == "gpt" ? "gpt-test" : "claude-test");
         using HttpClient http = new(transport);
@@ -117,10 +164,27 @@ public sealed class ChatClientRegistrationTests
     public void Authentication_RejectsAmbiguousOrMissingConfiguration(string key, string section)
     {
         Dictionary<string, string?> configuration = Configuration();
-        configuration[section + ":ApiKey"] = "not-a-real-api-key";
-        Assert.Throws<InvalidOperationException>(() => Register(CreateBuilder(configuration), key, section));
-        configuration[section + ":ApiKey"] = null;
+        configuration[section + ":Credential:CredentialSource"] = "ApiKey";
+        configuration[section + ":Credential:Key"] = "not-a-real-api-key";
+        InvalidOperationException error = Assert.Throws<InvalidOperationException>(() =>
+            Register(CreateBuilder(configuration), key, section));
+        Assert.Contains("Replace the $ reference before adding inline credential fields.", error.Message, StringComparison.Ordinal);
+        configuration.Remove(section + ":Credential:CredentialSource");
+        configuration.Remove(section + ":Credential:Key");
         configuration[section + ":Credential"] = null;
+        Assert.Throws<InvalidOperationException>(() => Register(CreateBuilder(configuration), key, section));
+    }
+
+    [Theory]
+    [InlineData("gpt", "TasteTest:Gpt")]
+    [InlineData("claude", "TasteTest:Claude")]
+    public void Authentication_RequiresTheReferencedCredentialSourceAndScope(string key, string section)
+    {
+        Dictionary<string, string?> configuration = Configuration();
+        configuration.Remove("TasteTest:Credential:CredentialSource");
+        Assert.Throws<InvalidOperationException>(() => Register(CreateBuilder(configuration), key, section));
+        configuration["TasteTest:Credential:CredentialSource"] = "AzureCliCredential";
+        configuration.Remove("TasteTest:Credential:Scope");
         Assert.Throws<InvalidOperationException>(() => Register(CreateBuilder(configuration), key, section));
     }
 
@@ -165,8 +229,7 @@ public sealed class ChatClientRegistrationTests
         using ResponseHandler transport = new("claude-test");
         using HttpClient http = new(transport);
         HostApplicationBuilder builder = CreateBuilder(Configuration());
-        builder.AddCredentialFromConfig("TasteTest:Credential");
-        builder.Services.AddKeyedSingleton<TokenCredential>("TasteTest:Credential", credential);
+        AddTestCredentialResolver(builder, credential);
         builder.AddKeyedAnthropicChatClient("claude", "TasteTest:Claude", http);
         using ServiceProvider services = builder.Services.BuildServiceProvider();
         IChatClient client = services.GetRequiredKeyedService<IChatClient>("claude");
@@ -185,8 +248,7 @@ public sealed class ChatClientRegistrationTests
         using ResponseHandler transport = new("claude-test");
         using HttpClient http = new(transport);
         HostApplicationBuilder builder = CreateBuilder(Configuration());
-        builder.AddCredentialFromConfig("TasteTest:Credential");
-        builder.Services.AddKeyedSingleton<TokenCredential>("TasteTest:Credential", credential);
+        AddTestCredentialResolver(builder, credential);
         builder.AddKeyedAnthropicChatClient("claude", "TasteTest:Claude", http);
         using ServiceProvider services = builder.Services.BuildServiceProvider();
         IChatClient client = services.GetRequiredKeyedService<IChatClient>("claude");
@@ -199,19 +261,67 @@ public sealed class ChatClientRegistrationTests
     }
 
     [Fact]
-    public void ReadmeSetup_IsTheCompiledProgramSnippet()
+    public void ReadmeSnippets_MatchEveryCompiledSourceRegion()
     {
         string root = SdkLiveTests.RepositoryRoot();
-        string program = File.ReadAllText(Path.Combine(root, "src", "TasteTest", "Program.cs"));
         string readme = File.ReadAllText(Path.Combine(root, "README.md"));
-        Match source = Regex.Match(program, @"#region Snippet:KeyedChatClientSetup\s*\r?\n(?<code>[\s\S]*?)\s*#endregion");
-        Match markdown = Regex.Match(readme, @"```csharp Snippet:KeyedChatClientSetup\s*\r?\n(?<code>[\s\S]*?)\r?\n```");
-        Assert.True(source.Success);
-        Assert.True(markdown.Success);
-        string compiled = string.Join("\n", source.Groups["code"].Value.Replace("\r", "", StringComparison.Ordinal)
-            .Split('\n').Select(line => line.StartsWith("    ", StringComparison.Ordinal) ? line[4..] : line)).Trim();
-        Assert.Equal(compiled, markdown.Groups["code"].Value.Replace("\r", "", StringComparison.Ordinal).Trim());
-        Assert.DoesNotContain("var ", compiled, StringComparison.Ordinal);
+        Dictionary<string, string> snippets = new(StringComparer.Ordinal);
+        foreach (string file in Directory.EnumerateFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
+            .Where(file => !file.Split(Path.DirectorySeparatorChar).Any(part => part is "bin" or "obj")))
+        {
+            foreach (Match source in Regex.Matches(File.ReadAllText(file),
+                @"(?m)^[ \t]*#region Snippet:(?<name>\w+)[ \t]*\r?\n(?<code>[\s\S]*?)^[ \t]*#endregion"))
+            {
+                Assert.True(snippets.TryAdd(source.Groups["name"].Value, NormalizeSnippet(source.Groups["code"].Value)),
+                    $"Duplicate compiled snippet in {file}.");
+            }
+        }
+        MatchCollection markdown = Regex.Matches(readme,
+            @"```csharp Snippet:(?<name>\w+)[ \t]*\r?\n(?<code>[\s\S]*?)\r?\n```");
+        Assert.NotEmpty(snippets);
+        Assert.Equal(snippets.Count, markdown.Count);
+        foreach (Match snippet in markdown)
+        {
+            string name = snippet.Groups["name"].Value;
+            Assert.True(snippets.Remove(name, out string? compiled), $"Missing or duplicate compiled snippet: {name}.");
+            Assert.Equal(compiled, NormalizeSnippet(snippet.Groups["code"].Value));
+            Assert.DoesNotContain("var ", compiled!, StringComparison.Ordinal);
+        }
+        Assert.Empty(snippets);
+    }
+
+    private static string NormalizeSnippet(string code)
+    {
+        string[] lines = code.Replace("\r", "", StringComparison.Ordinal).Trim('\n').Split('\n');
+        int indentation = lines.Where(line => !string.IsNullOrWhiteSpace(line))
+            .Min(line => line.Length - line.TrimStart().Length);
+        return string.Join("\n", lines.Select(line => line.Length >= indentation ? line[indentation..].TrimEnd() : "")).Trim();
+    }
+
+    internal static TestCredentialResolver AddTestCredentialResolver(IHostApplicationBuilder builder, TokenCredential credential)
+    {
+        TestCredentialResolver resolver = new(credential);
+        builder.Services.AddSingleton<CredentialResolver>(resolver);
+        builder.AddAzureCredentialResolver();
+        return resolver;
+    }
+
+    internal sealed class TestCredentialResolver(TokenCredential credential) : CredentialResolver
+    {
+        public int Resolutions { get; private set; }
+
+        public override bool TryResolve(
+            IConfigurationSection section, [NotNullWhen(true)] out AuthenticationTokenProvider? tokenProvider)
+        {
+            if (section.Path.Equals("TasteTest:Credential", StringComparison.OrdinalIgnoreCase))
+            {
+                Resolutions++;
+                tokenProvider = credential;
+                return true;
+            }
+            tokenProvider = null;
+            return false;
+        }
     }
 
     private static HostApplicationBuilder CreateBuilder(Dictionary<string, string?> configuration)
@@ -273,3 +383,4 @@ public sealed class ChatClientRegistrationTests
         }
     }
 }
+#pragma warning restore SCME0002

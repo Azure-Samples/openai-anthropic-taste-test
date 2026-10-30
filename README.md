@@ -143,28 +143,87 @@ This is the part worth reading. Two vendors, two protocols, one application loop
 Both providers are registered as keyed `IChatClient` services from configuration. This is the compiled setup in [Program.cs](src/TasteTest/Program.cs); a test keeps this snippet synchronized with it:
 
 ```csharp Snippet:KeyedChatClientSetup
-builder.AddCredentialFromConfig("TasteTest:Credential");
-builder.AddKeyedResponsesChatClient("gpt", "TasteTest:Gpt")
-    .UseFunctionInvocation(configure: client =>
-    {
-        client.MaximumIterationsPerRequest = 4;
-        client.MaximumConsecutiveErrorsPerRequest = 4;
-    })
-    .UseOpenTelemetry(sourceName: "TasteTest.Chat", configure: telemetry => telemetry.EnableSensitiveData = false);
-builder.AddKeyedAnthropicChatClient("claude", "TasteTest:Claude")
-    .UseFunctionInvocation(configure: client =>
-    {
-        client.MaximumIterationsPerRequest = 4;
-        client.MaximumConsecutiveErrorsPerRequest = 4;
-    })
-    .UseOpenTelemetry(sourceName: "TasteTest.Chat", configure: telemetry => telemetry.EnableSensitiveData = false);
+builder.AddAzureCredentialResolver();
+ConfigureChatClient(builder.AddKeyedResponsesChatClient("gpt", "TasteTest:Gpt"));
+ConfigureChatClient(builder.AddKeyedAnthropicChatClient("claude", "TasteTest:Claude"));
 ```
 
-The small [registration helpers](src/TasteTest/Services/ChatClientRegistration.cs) use the official OpenAI SDK's `AddKeyedResponsesClient` to bind its settings, and the standard `AnthropicClient` with an explicit base URL. They add the MEAI adapters; they do not implement either provider's HTTP protocol. There are no host-specific AI SDK dependencies.
+One local function applies the same middleware to both live and preview clients:
+
+```csharp Snippet:ChatClientMiddleware
+static void ConfigureChatClient(ChatClientBuilder client)
+{
+    client.UseFunctionInvocation(configure: invocation =>
+        {
+            invocation.MaximumIterationsPerRequest = 4;
+            invocation.MaximumConsecutiveErrorsPerRequest = 4;
+        })
+        .UseOpenTelemetry(sourceName: "TasteTest.Chat", configure: telemetry => telemetry.EnableSensitiveData = false);
+}
+```
+
+The small [registration helpers](src/TasteTest/Services/ChatClientRegistration.cs) use the official OpenAI SDK's `AddKeyedResponsesClient` to bind its settings, and the standard `AnthropicClient` with an explicit base URL. Both use the native credential schema and Azure.Identity's resolver, supplied by Azure.Core without any Azure AI client dependency. There are no host-specific AI SDK dependencies. The sample intentionally opts into the SDK's experimental configuration/DI APIs with documented `SCME0002` suppressions.
 
 OpenAI's native configuration path creates its `BearerTokenPolicy`. Anthropic's standard SDK accepts an `IAccessTokenProvider`; the sample adapts the configured Azure.Identity `TokenCredential` to that callback. The SDK owns token caching and refresh, so no custom authentication HTTP handler is needed.
 
-The [session](src/TasteTest/Services/TasteTestSession.cs) receives the two keyed services and uses the same streaming, tool-calling, cancellation, and history logic for both. `ToChatResponse()` folds API usage into one `UsageDetails` type.
+The [session](src/TasteTest/Services/TasteTestSession.cs) receives the keyed services through its constructor:
+
+```csharp Snippet:KeyedChatClientConsumption
+public TasteTestSession(
+    [FromKeyedServices("gpt")] IChatClient gpt,
+    [FromKeyedServices("claude")] IChatClient claude,
+    ILaneOrderRandomizer randomizer,
+    IOptions<TasteTestOptions> options,
+    ILogger<TasteTestSession> logger)
+{
+    ArgumentNullException.ThrowIfNull(gpt);
+    ArgumentNullException.ThrowIfNull(claude);
+    ArgumentNullException.ThrowIfNull(randomizer);
+    ArgumentNullException.ThrowIfNull(options);
+    ArgumentNullException.ThrowIfNull(logger);
+
+    _gpt = gpt;
+    _claude = claude;
+    _randomizer = randomizer;
+    _options = options.Value;
+    _logger = logger;
+    _lanes = CreateLanes();
+}
+```
+
+For either lane, the same loop streams the response, keeps the full updates for tool/history processing, and reports progress to the page:
+
+```csharp Snippet:SharedChatStreaming
+await foreach (ChatResponseUpdate update in client
+    .GetStreamingResponseAsync(messages, chatOptions, requestToken)
+    .ConfigureAwait(false))
+{
+    requestToken.ThrowIfCancellationRequested();
+    updates.Add(update);
+
+    if (update.Role == ChatRole.Tool || update.Contents.Any(content => content is FunctionResultContent))
+    {
+        toolBoundary = true;
+    }
+
+    if (update.Role != ChatRole.Tool && !string.IsNullOrEmpty(update.Text))
+    {
+        if (turn.TimeToFirstToken is null)
+        {
+            turn.TimeToFirstToken = Stopwatch.GetElapsedTime(startedAt);
+        }
+        if (toolBoundary && turn.HasResponse)
+        {
+            turn.AppendResponse("\n\n");
+        }
+        toolBoundary = false;
+        turn.AppendResponse(update.Text);
+    }
+    await notifyProgress(false);
+}
+```
+
+`ToChatResponse()` then folds API usage into one `UsageDetails` type. Cancellation and completed-history handling are shared too. Changing the model or provider does not change this application loop.
 
 ### Connection and credential configuration
 
@@ -175,8 +234,6 @@ The endpoint and model are separate from the UI settings. Set the complete API b
   "TasteTest": {
     "Credential": {
       "CredentialSource": "ManagedIdentityCredential",
-      "ManagedIdentityIdKind": "ClientId",
-      "ClientId": "",
       "Scope": "https://ai.azure.com/.default"
     },
     "Gpt": {
@@ -197,17 +254,29 @@ The endpoint and model are separate from the UI settings. Set the complete API b
 }
 ```
 
-For local development, change only `CredentialSource` to `AzureCliCredential` after `az login`. `AzureDeveloperCliCredential` is also supported for an existing `azd auth login`. Set `TenantId` in the credential section when the account belongs to multiple tenants. The deployed template sets the managed identity's client ID; an omitted client ID selects system-assigned managed identity.
+For local development, change only `CredentialSource` to `AzureCliCredential` after `az login`. `AzureDeveloperCliCredential` is also supported for an existing `azd auth login`. Set `TenantId` in the credential section when the account belongs to multiple tenants. The deployed template supplies the user-assigned managed identity through `AZURE_CLIENT_ID`, which the SDK resolver uses. To configure that identity directly, use the SDK's `ManagedIdentityIdKind: ClientId` and `ManagedIdentityId` fields; without an explicit ID or `AZURE_CLIENT_ID`, the SDK selects system-assigned identity.
 
 The sample deliberately selects a specific credential rather than a default credential chain. Connection settings also use standard .NET environment-variable names, for example `TasteTest__Credential__CredentialSource=AzureCliCredential`.
 
-For the providers' public APIs, omit `Credential`, set `ApiKey` through environment variables or user secrets, and use `https://api.openai.com/v1/` or `https://api.anthropic.com/` as the endpoint. Setting both authentication options is an error. Do not put keys in checked-in configuration. Both helpers reject relative endpoints and non-HTTPS URLs; HTTP is allowed only for a loopback test server.
+For a provider's public API, replace that client's `$TasteTest:Credential` reference with an inline SDK credential section:
+
+```json
+{
+  "Credential": {
+    "CredentialSource": "ApiKey"
+  }
+}
+```
+
+Supply `TasteTest__Gpt__Credential__Key` or `TasteTest__Claude__Credential__Key` through environment variables or user secrets, and use `https://api.openai.com/v1/` or `https://api.anthropic.com/` as the endpoint. `ApiKeyCredential` is also an accepted SDK source name. A credential is either an inline section or a reference, not both; replace the reference before adding inline fields. There is no separate top-level `ApiKey` setting. Do not put keys in checked-in configuration. Both helpers reject relative endpoints and non-HTTPS URLs; HTTP is allowed only for a loopback test server.
+
+Application limits use the same hierarchical configuration: `TasteTest__MaxOutputTokens` and `TasteTest__UseSampleResponses`. Normal .NET provider precedence applies, including command-line arguments. The local launchers translate azd's `TASTE_TEST_MAX_OUTPUT_TOKENS` output into the hierarchical name, so existing deployment settings still work.
 
 The [completion adapter](src/TasteTest/Services/OpenAIStreamCompletionClient.cs) preserves finish reason and usage on incomplete OpenAI streams, which MEAI.OpenAI 10.11.0 does not yet convert. OpenAI calls use `store: false` and request encrypted reasoning content, so tool iterations can replay context without relying on a previously stored response ID.
 
 Both lanes request low reasoning effort for short, responsive comparisons. Anthropic 13 maps this shared option to adaptive thinking and `output_config.effort`, rather than a fixed reasoning-token budget. This sample is not a maximum-effort benchmark.
 
-Swapping either lane for a different model is a configuration change, not a rewrite.
+Swapping a model or provider leaves the shared application loop unchanged.
 
 ### Shared business tool
 
@@ -448,7 +517,7 @@ $env:TASTE_TEST_RUN_LIVE = '1'
 dotnet test tests/TasteTest.Tests/TasteTest.Tests.csproj --filter Category=Live
 ```
 
-The live checks require a streamed tool result and both model/tool spans from each SDK. Public-provider API-key inference is not part of those checks. The [draft Anthropic follow-up](docs/anthropic-credential-integration-issue.md) records the remaining registration/credential integration work; the sample does not wait on it.
+The live checks require a streamed tool result and both model/tool spans from each SDK. Public-provider API-key inference is not part of those checks.
 
 CI also tests both local launchers and compiles the Bicep template to check required browser authentication, tenant and audience restrictions, and secretless federation. See [Contributing](CONTRIBUTING.md) to run those checks locally.
 

@@ -164,14 +164,6 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               value: 'ManagedIdentityCredential'
             }
             {
-              name: 'TasteTest__Credential__ManagedIdentityIdKind'
-              value: 'ClientId'
-            }
-            {
-              name: 'TasteTest__Credential__ClientId'
-              value: appIdentity.properties.clientId
-            }
-            {
               name: 'TasteTest__Credential__Scope'
               value: 'https://ai.azure.com/.default'
             }
@@ -192,8 +184,12 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               value: claudeDeploymentName
             }
             {
-              name: 'TASTE_TEST_MAX_OUTPUT_TOKENS'
+              name: 'TasteTest__MaxOutputTokens'
               value: string(maxOutputTokens)
+            }
+            {
+              name: 'TasteTest__UseSampleResponses'
+              value: 'false'
             }
             {
               name: 'TASTE_TEST_TELEMETRY_CONSOLE'

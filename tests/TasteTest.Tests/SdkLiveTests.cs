@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using Azure.Identity;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -9,6 +10,8 @@ using Xunit.Abstractions;
 
 namespace TasteTest.Tests;
 
+// Exercise the SDK's experimental credential/configuration integration used in Program.cs.
+#pragma warning disable SCME0002
 public sealed class SdkLiveTests(ITestOutputHelper output)
 {
     [LiveTheory]
@@ -26,7 +29,7 @@ public sealed class SdkLiveTests(ITestOutputHelper output)
         builder.Services.AddLogging();
         builder.Configuration.AddJsonFile(Path.Combine(RepositoryRoot(), "src", "TasteTest", "appsettings.json"))
             .AddEnvironmentVariables();
-        builder.AddCredentialFromConfig("TasteTest:Credential");
+        builder.AddAzureCredentialResolver();
         ChatClientBuilder chat = key == "gpt"
             ? builder.AddKeyedResponsesChatClient(key, section)
             : builder.AddKeyedAnthropicChatClient(key, section);

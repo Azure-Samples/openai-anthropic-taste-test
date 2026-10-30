@@ -60,9 +60,18 @@ $credential = @($environment | Where-Object name -eq 'TasteTest__Credential__Cre
 Assert-Equal $identity.Count 1 'Managed identity client ID'
 Assert-Equal $credential.Count 1 'Hosted credential selector'
 Assert-Equal $credential[0].value 'ManagedIdentityCredential' 'No developer credential fallback in Azure'
-$configuredIdentity = @($environment | Where-Object name -eq 'TasteTest__Credential__ClientId')
-Assert-Equal $configuredIdentity.Count 1 'Configured managed identity'
-Assert-Equal $configuredIdentity[0].value $identity[0].value 'Client configuration uses the attached identity'
+Assert-Equal (@($environment | Where-Object { $_.name -in @(
+    'TasteTest__Credential__ClientId', 'TasteTest__Credential__ManagedIdentityIdKind'
+) }).Count) 0 'Native resolver uses AZURE_CLIENT_ID without a second identity schema'
+$maxOutputTokens = @($environment | Where-Object name -eq 'TasteTest__MaxOutputTokens')
+$sampleResponses = @($environment | Where-Object name -eq 'TasteTest__UseSampleResponses')
+Assert-Equal $maxOutputTokens.Count 1 'Hierarchical token limit'
+Assert-Equal $maxOutputTokens[0].value "[string(parameters('maxOutputTokens'))]" 'Configured token limit'
+Assert-Equal $sampleResponses.Count 1 'Explicit live mode'
+Assert-Equal $sampleResponses[0].value 'false' 'Hosted app uses live model responses'
+Assert-Equal (@($environment | Where-Object { $_.name -in @(
+    'TASTE_TEST_MAX_OUTPUT_TOKENS', 'TASTE_TEST_USE_SAMPLE_RESPONSES'
+) }).Count) 0 'No flat application-setting overrides'
 $gptEndpoint = @($environment | Where-Object name -eq 'TasteTest__Gpt__Options__Endpoint')
 $claudeEndpoint = @($environment | Where-Object name -eq 'TasteTest__Claude__Options__Endpoint')
 Assert-Equal $gptEndpoint.Count 1 'Configured OpenAI endpoint'

@@ -129,25 +129,19 @@ public sealed class NativeChatClientTests
         HostApplicationBuilder builder = Host.CreateEmptyApplicationBuilder(null);
         builder.Services.AddLogging();
         builder.Configuration.AddInMemoryCollection(ChatClientRegistrationTests.Configuration());
-        builder.AddCredentialFromConfig("TasteTest:Credential");
-        builder.Services.AddKeyedSingleton<TokenCredential>("TasteTest:Credential", credential ?? new TestCredential());
-        builder.AddKeyedResponsesChatClient("gpt", "TasteTest:Gpt", transport.CreateClient("gpt"))
-            .UseFunctionInvocation(configure: client =>
-            {
-                client.MaximumIterationsPerRequest = 4;
-                client.MaximumConsecutiveErrorsPerRequest = 4;
-            })
-            .UseOpenTelemetry(sourceName: TasteTestTelemetry.SourceName,
-                configure: telemetry => telemetry.EnableSensitiveData = false);
-        builder.AddKeyedAnthropicChatClient("claude", "TasteTest:Claude", transport.CreateClient("claude"))
-            .UseFunctionInvocation(configure: client =>
-            {
-                client.MaximumIterationsPerRequest = 4;
-                client.MaximumConsecutiveErrorsPerRequest = 4;
-            })
-            .UseOpenTelemetry(sourceName: TasteTestTelemetry.SourceName,
-                configure: telemetry => telemetry.EnableSensitiveData = false);
+        ChatClientRegistrationTests.AddTestCredentialResolver(builder, credential ?? new TestCredential());
+        ConfigureChatClient(builder.AddKeyedResponsesChatClient("gpt", "TasteTest:Gpt", transport.CreateClient("gpt")));
+        ConfigureChatClient(builder.AddKeyedAnthropicChatClient("claude", "TasteTest:Claude", transport.CreateClient("claude")));
         return builder.Services.BuildServiceProvider();
+
+        static void ConfigureChatClient(ChatClientBuilder client) =>
+            client.UseFunctionInvocation(configure: invocation =>
+                {
+                    invocation.MaximumIterationsPerRequest = 4;
+                    invocation.MaximumConsecutiveErrorsPerRequest = 4;
+                })
+                .UseOpenTelemetry(sourceName: TasteTestTelemetry.SourceName,
+                    configure: telemetry => telemetry.EnableSensitiveData = false);
     }
 
     private static IChatClient GetClient(IServiceProvider services, ProviderKind provider) =>

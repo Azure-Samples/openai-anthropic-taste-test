@@ -8,7 +8,7 @@
         "applicationUrl": "http://localhost:5050",
         "environmentVariables": {
           "ASPNETCORE_ENVIRONMENT": "Development",
-          "TASTE_TEST_USE_SAMPLE_RESPONSES": "true"
+          "TasteTest__UseSampleResponses": "true"
         }
       },
       "http": {
