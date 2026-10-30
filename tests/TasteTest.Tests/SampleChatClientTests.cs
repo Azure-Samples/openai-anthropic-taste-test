@@ -1,18 +1,22 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.AI;
 using TasteTest.Services;
 
 namespace TasteTest.Tests;
 
-public sealed class SampleModelChatClientFactoryTests
+public sealed class SampleChatClientTests
 {
     [Fact]
     public async Task Preview_ExercisesTheSharedCatalogWithoutCallingAzure()
     {
-        var options = new TasteTestOptions { UseSampleResponses = true };
-        using var factory = new SampleModelChatClientFactory(Options.Create(options));
-        var session = new TasteTestSession(
-            factory, new CryptoLaneOrderRandomizer(), Options.Create(options), NullLogger<TasteTestSession>.Instance);
+        TasteTestOptions options = new() { UseSampleResponses = true };
+        using IChatClient gpt = new SampleChatClient(ProviderKind.OpenAI, "gpt-preview")
+            .AsBuilder().UseFunctionInvocation().Build();
+        using IChatClient claude = new SampleChatClient(ProviderKind.Anthropic, "claude-preview")
+            .AsBuilder().UseFunctionInvocation().Build();
+        TasteTestSession session = new(
+            gpt, claude, new CryptoLaneOrderRandomizer(), Options.Create(options), NullLogger<TasteTestSession>.Instance);
 
         await session.SendAsync(options.SeedPrompts[3], _ => Task.CompletedTask);
 

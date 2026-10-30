@@ -9,8 +9,6 @@ public sealed class TasteTestOptionsTests
     public void Defaults_LeaveRoomForReasoningAndBoundRequestDuration()
     {
         var options = new TasteTestOptions();
-        Assert.Equal("gpt-6.1-sol", options.AoaiDeploymentName);
-        Assert.Equal("claude-sonnet-5-5", options.ClaudeDeploymentName);
         Assert.Equal(4096, options.MaxOutputTokens);
         Assert.Equal(120, options.RequestTimeoutSeconds);
     }
@@ -25,42 +23,46 @@ public sealed class TasteTestOptionsTests
     }
 
     [Fact]
-    public void FromConfiguration_UsesAzdEnvironmentVariables()
+    public void FromConfiguration_BindsHierarchicalSettings()
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["AZURE_FOUNDRY_ENDPOINT"] = "https://sample.services.ai.azure.com/",
-                ["AOAI_DEPLOYMENT_NAME"] = "gpt-test",
-                ["CLAUDE_DEPLOYMENT_NAME"] = "claude-test",
-                ["TASTE_TEST_MAX_OUTPUT_TOKENS"] = "512"
+                ["TasteTest:MaxOutputTokens"] = "512",
+                ["TasteTest:UseSampleResponses"] = "true"
             })
             .Build();
 
         var options = TasteTestOptions.FromConfiguration(configuration);
 
-        Assert.Equal("https://sample.services.ai.azure.com", options.FoundryEndpoint);
-        Assert.Equal("sample", options.FoundryResourceName);
-        Assert.Equal("gpt-test", options.AoaiDeploymentName);
-        Assert.Equal("claude-test", options.ClaudeDeploymentName);
         Assert.Equal(512, options.MaxOutputTokens);
+        Assert.True(options.UseSampleResponses);
     }
 
     [Fact]
-    public void FromConfiguration_PrefersEnvironmentVariablesOverSectionValues()
+    public void FromConfiguration_PreservesProviderAndCommandLinePrecedence()
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                [$"{TasteTestOptions.SectionName}:AoaiDeploymentName"] = "from-section",
-                [$"{TasteTestOptions.SectionName}:MaxPromptCharacters"] = "1234",
-                ["AOAI_DEPLOYMENT_NAME"] = "from-environment"
+                ["TasteTest:MaxOutputTokens"] = "4096",
+                ["TasteTest:MaxPromptCharacters"] = "1234",
+                ["TasteTest:UseSampleResponses"] = "false",
+                ["TASTE_TEST_MAX_OUTPUT_TOKENS"] = "512",
+                ["TASTE_TEST_USE_SAMPLE_RESPONSES"] = "false"
             })
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TasteTest:MaxOutputTokens"] = "1024",
+                ["TasteTest:UseSampleResponses"] = "true"
+            })
+            .AddCommandLine(["--TasteTest:MaxOutputTokens", "2048"])
             .Build();
 
         var options = TasteTestOptions.FromConfiguration(configuration);
 
-        Assert.Equal("from-environment", options.AoaiDeploymentName);
+        Assert.Equal(2048, options.MaxOutputTokens);
+        Assert.True(options.UseSampleResponses);
         Assert.Equal(1234, options.MaxPromptCharacters);
     }
 
@@ -70,17 +72,18 @@ public sealed class TasteTestOptionsTests
         var options = new TasteTestOptions
         {
             MaxOutputTokens = 1,
-            ClaudeDeploymentName = string.Empty
+            RequestTimeoutSeconds = 0,
+            MaxPromptCharacters = 1
         };
 
         var errors = options.GetValidationErrors();
 
         Assert.Contains(errors, error => error.Contains(nameof(TasteTestOptions.MaxOutputTokens), StringComparison.Ordinal));
-        Assert.Contains(errors, error => error.Contains("AZURE_FOUNDRY_ENDPOINT", StringComparison.Ordinal));
-        Assert.Contains(errors, error => error.Contains("CLAUDE_DEPLOYMENT_NAME", StringComparison.Ordinal));
+        Assert.Contains(errors, error => error.Contains(nameof(TasteTestOptions.RequestTimeoutSeconds), StringComparison.Ordinal));
+        Assert.Contains(errors, error => error.Contains(nameof(TasteTestOptions.MaxPromptCharacters), StringComparison.Ordinal));
 
         var exception = Assert.Throws<OptionsValidationException>(options.Validate);
-        Assert.Contains("AZURE_FOUNDRY_ENDPOINT", exception.Message, StringComparison.Ordinal);
+        Assert.Contains(nameof(TasteTestOptions.RequestTimeoutSeconds), exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -97,20 +100,16 @@ public sealed class TasteTestOptionsTests
     }
 
     [Fact]
-    public void Validate_AcceptsProvisionedConfiguration()
+    public void Validate_OnlyValidatesApplicationLimits()
     {
-        var options = new TasteTestOptions
-        {
-            FoundryEndpoint = "https://sample.services.ai.azure.com",
-            FoundryResourceName = "sample"
-        };
+        TasteTestOptions options = new();
 
         options.Validate();
     }
 
     [Theory]
-    [InlineData("TASTE_TEST_USE_SAMPLE_RESPONSES", "not-a-boolean")]
-    [InlineData("TASTE_TEST_MAX_OUTPUT_TOKENS", "not-a-number")]
+    [InlineData("TasteTest:UseSampleResponses", "not-a-boolean")]
+    [InlineData("TasteTest:MaxOutputTokens", "not-a-number")]
     public void FromConfiguration_RejectsMalformedOverrides(string key, string value)
     {
         var configuration = new ConfigurationBuilder()

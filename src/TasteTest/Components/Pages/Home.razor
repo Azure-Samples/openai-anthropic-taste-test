@@ -9,7 +9,7 @@
 <main class="taste-shell">
     <header class="hero">
         <div>
-            <p class="eyebrow">MICROSOFT FOUNDRY</p>
+            <p class="eyebrow">MICROSOFT.EXTENSIONS.AI</p>
             <h1>One prompt. Two perspectives.</h1>
             <p class="hero-copy">One <code>IChatClient</code>. Pick the answer, then discover the model.</p>
         </div>
@@ -79,7 +79,7 @@
             </div>
             <p class="request-status">The support-plan question uses one shared, read-only catalog tool. Prices and support targets are fictional.</p>
             <div class="seed-grid">
-                @foreach (var seed in Session.SeedPrompts)
+                @foreach (string seed in Session.SeedPrompts)
                 {
                     <button type="button" class="seed-card" disabled="@IsSubmitting" @onclick="() => SelectPrompt(seed)">
                         @seed
@@ -97,10 +97,10 @@
                 <h2 id="reveal-heading">Your preference. Their identity.</h2>
             </div>
             <div class="identity-grid">
-                @foreach (var lane in Session.Lanes)
+                @foreach (TasteTestLane lane in Session.Lanes)
                 {
-                    var identity = Session.GetIdentity(lane);
-                    var isWinner = ReferenceEquals(lane, Session.Winner);
+                    ModelIdentity identity = Session.GetIdentity(lane);
+                    bool isWinner = ReferenceEquals(lane, Session.Winner);
                     <article @key="lane"
                              class="identity-card @(isWinner ? "identity-winner" : null)"
                              data-provider="@identity.Provider">
@@ -124,9 +124,9 @@
                     <p class="construction-note">Different vendors, different wire protocols, identical call site.</p>
                 </div>
                 <div class="construction-rows">
-                    @foreach (var provider in new[] { ProviderKind.OpenAI, ProviderKind.Anthropic })
+                    @foreach (ProviderKind provider in new[] { ProviderKind.OpenAI, ProviderKind.Anthropic })
                     {
-                        var identity = Session.GetIdentity(provider);
+                        ModelIdentity identity = Session.GetIdentity(provider);
                         <div @key="provider" class="construction-row" data-provider="@identity.Provider">
                             <span class="construction-sdk">@identity.Sdk</span>
                             <code>@ConstructionSnippet(provider, identity.ModelId)</code>
@@ -138,7 +138,7 @@
     }
 
     <section class="lane-grid @(Session.Revealed ? "lane-grid-revealed" : null)" aria-label="Model responses">
-        @foreach (var lane in Session.VisibleLanes)
+        @foreach (TasteTestLane lane in Session.VisibleLanes)
         {
             <article @key="lane" class="lane-card">
                 <header class="lane-header">
@@ -173,7 +173,7 @@
                         </div>
                     }
 
-                    @foreach (var turn in lane.Turns)
+                    @foreach (TasteTestTurn turn in lane.Turns)
                     {
                         <div @key="turn" class="turn">
                             <div class="turn-label">You</div>
@@ -251,7 +251,7 @@
                 }
             </div>
             <div class="vote-actions">
-                @foreach (var lane in Session.Lanes)
+                @foreach (TasteTestLane lane in Session.Lanes)
                 {
                     <button type="button" class="vote-button" disabled="@(!Session.CanPick || IsSubmitting)" @onclick="() => Pick(lane)">Pick @lane.Label</button>
                 }
@@ -274,7 +274,7 @@
     @if (Session.Revealed)
     {
         <footer class="model-footer">
-            @foreach (var lane in Session.Lanes)
+            @foreach (TasteTestLane lane in Session.Lanes)
             {
                 <span>Lane @lane.Label · @Session.GetIdentity(lane).ModelId</span>
             }
@@ -306,9 +306,9 @@
             return;
         }
 
-        var submittedPrompt = Prompt;
+        string submittedPrompt = Prompt;
         ErrorMessage = null;
-        using var cancellation = new CancellationTokenSource();
+        using CancellationTokenSource cancellation = new();
         _requestCancellation = cancellation;
         _cancelRequested = false;
 
@@ -350,14 +350,14 @@
             return Task.CompletedTask;
         }
 
-        var now = Stopwatch.GetTimestamp();
+        long now = Stopwatch.GetTimestamp();
         if (force)
         {
             Interlocked.Exchange(ref _lastRenderTimestamp, now);
         }
         else
         {
-            var previous = Interlocked.Read(ref _lastRenderTimestamp);
+            long previous = Interlocked.Read(ref _lastRenderTimestamp);
             if (Stopwatch.GetElapsedTime(previous, now) < RenderInterval ||
                 Interlocked.CompareExchange(ref _lastRenderTimestamp, now, previous) != previous)
             {
@@ -418,8 +418,8 @@
 
     private static string ConstructionSnippet(ProviderKind provider, string modelId) => provider switch
     {
-        ProviderKind.OpenAI => $"""new OpenAIClient(...).GetResponsesClient().AsIChatClient("{modelId}")""",
-        ProviderKind.Anthropic => $"""new AnthropicFoundryClient(...).AsIChatClient("{modelId}")""",
+        ProviderKind.OpenAI => $"""ResponsesClient.AsIChatClient("{modelId}")""",
+        ProviderKind.Anthropic => $"""AnthropicClient.AsIChatClient("{modelId}")""",
         _ => throw ModelCatalog.UnknownProvider(provider)
     };
 

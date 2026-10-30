@@ -13,8 +13,8 @@ public static class ResponseMarkdown
     public static string ToHtml(string text)
     {
         ArgumentNullException.ThrowIfNull(text);
-        using var writer = new StringWriter(CultureInfo.InvariantCulture);
-        var renderer = new HtmlRenderer(writer);
+        using StringWriter writer = new StringWriter(CultureInfo.InvariantCulture);
+        HtmlRenderer renderer = new HtmlRenderer(writer);
         Pipeline.Setup(renderer);
         // Model-generated URLs and images are inert: no script links or remote image requests.
         renderer.ObjectRenderers.Insert(0, new TextOnlyLinkRenderer());

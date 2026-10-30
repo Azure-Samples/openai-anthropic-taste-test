@@ -33,7 +33,12 @@ possible:
 
 ## Hard rules
 
-- Use Microsoft Entra authentication only. Never request, create, print, or store API keys.
+- Use Microsoft Entra authentication for Azure deployments; never enable account keys or bypass RBAC.
+  For optional public-provider API-key configuration, use user-supplied values through environment
+  variables or user secrets. Never request, generate, print, log, or commit API keys.
+- Keep model clients host-independent: only the official OpenAI and Anthropic SDKs, Azure.Identity
+  credentials and MEAI. Register keyed `IChatClient` services from configuration; use explicit
+  types in setup examples and do not introduce a default credential chain.
 - Run `azd provision --preview` before `azd provision` or `azd up`.
 - Never guess `CLAUDE_ORGANIZATION_NAME`; it is customer attestation data. Ask only when it cannot
   be resolved from the active azd environment.
@@ -151,9 +156,13 @@ azd provision --preview --no-prompt
 azd provision --no-prompt
 ```
 
-The application uses `DefaultAzureCredential`, whose developer chain includes Azure Developer CLI,
-Azure CLI, and supported IDE credentials. Reuse a cached credential for the target tenant rather than
-prompting for another login. Only if no usable credential exists, use browser-based Azure CLI login:
+The application selects a specific credential from `TasteTest:Credential:CredentialSource`.
+Development configuration uses `AzureCliCredential`; set
+`TasteTest__Credential__CredentialSource=AzureDeveloperCliCredential` to use cached `azd`
+authentication instead. Both providers use Azure.Identity's native credential resolver and schema.
+Azure hosting selects `ManagedIdentityCredential`; the resolver reads the user-assigned identity from
+`AZURE_CLIENT_ID`. Reuse a cached credential for the target tenant rather than prompting
+for another login. Only if no usable credential exists, use browser-based Azure CLI login:
 
 ```powershell
 az login --tenant <tenant-id>
@@ -198,6 +207,9 @@ verification below.
     must not be captured. Keep telemetry private and off-screen until reveal.
     Explicit shell telemetry variables override saved azd values in both local launchers;
     `false` disables console export and an explicitly empty endpoint disables OTLP.
+14. Application settings use `TasteTest__MaxOutputTokens` and `TasteTest__UseSampleResponses`.
+    The launchers translate azd's `TASTE_TEST_MAX_OUTPUT_TOKENS` output to the hierarchical name;
+    do not add flat-key overrides in application code.
 
 For a direct Claude smoke test, use the provisioned endpoint and deployment from
 `azd env get-values`. Acquire an Entra token for `https://ai.azure.com/.default`, POST a minimal
@@ -212,7 +224,7 @@ text response. Never print the token.
 | `no valid payment method` / plan cannot be purchased with a free subscription | The Marketplace plan is not eligible on that subscription | Use an eligible subscription. Some subscriptions are provisioned with a different pre-accepted plan, so confirm the available plans with the subscription administrator. |
 | `AnthropicOrganizationCreationException` | Attestation fields are missing or invalid | Set the legal entity, two-letter country, and lowercase industry |
 | `InsufficientQuota` | Model capacity is unavailable in the selected region | Lower capacity, select another supported region, or request quota |
-| Local app returns 401/403 | `DefaultAzureCredential` resolved a different tenant/account or the user lacks data access | Sign Azure CLI into the target tenant and verify `Azure AI Developer`, `Foundry Owner`, or `Cognitive Services User` |
+| Local app returns 401/403 | The configured CLI credential uses a different tenant/account or lacks data access | Check `TasteTest:Credential:CredentialSource` and `TenantId`, sign in to that tenant, and verify data-plane access. |
 | Azure-hosted app returns 401/403 | Managed-identity role assignment has not propagated | Verify `Cognitive Services User` on the Foundry account and retry after propagation |
 | One lane fails while the other succeeds | Provider-specific quota, deployment, auth, or endpoint problem | Check server logs; the browser intentionally hides provider details before reveal |
 | Empty answer or token-limit message | Reasoning can consume the output budget before visible text | Use the 4096-token default, restart the local app after settings change, then Retry comparison. Check terminal finish reason and usage in server logs. |

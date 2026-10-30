@@ -4,10 +4,10 @@
   <title>OpenAI + Anthropic Taste Test using Microsoft.Extensions.AI</title>
   <desc>
     A .NET 10 application programs against a single Microsoft.Extensions.AI IChatClient. That one
-    abstraction fans out to two lanes. The OpenAI lane uses the OpenAI SDK for .NET, calling
-    GetResponsesClient().AsIChatClient() over the Responses API at the /openai/v1 route to a
+    abstraction fans out to two keyed, config-driven lanes. The OpenAI lane uses the OpenAI SDK
+    for .NET and its native ResponsesClient registration over the Responses API at /openai/v1 to a
     gpt-6.1-sol deployment of Azure OpenAI in Microsoft Foundry. The Anthropic lane uses the
-    Anthropic C# SDK, calling AnthropicFoundryClient(...).AsIChatClient() over the Messages API at
+    standard Anthropic C# SDK and AnthropicClient.AsIChatClient() over the Messages API at
     the /anthropic route to a claude-sonnet-5-5 deployment of Claude in Microsoft Foundry. Both lanes
     authenticate with Microsoft Entra ID and use no API keys. Both invoke the same read-only
     fictional support-plan catalog and share OpenTelemetry instrumentation.
@@ -101,13 +101,13 @@
 
     <line x1="40" y1="174" x2="280" y2="174" stroke="#D9CCFA" stroke-width="1.2"/>
 
-    <text x="160" y="201" text-anchor="middle" font-size="13.5" fill="#4A5A6A">Shared read-only catalog tool.</text>
-    <text x="160" y="222" text-anchor="middle" font-size="13.5" fill="#4A5A6A">One streaming and telemetry pipeline.</text>
+    <text x="160" y="201" text-anchor="middle" font-size="13.5" fill="#4A5A6A">Keyed clients. Configuration-driven setup.</text>
+    <text x="160" y="222" text-anchor="middle" font-size="13.5" fill="#4A5A6A">Shared catalog, streaming and telemetry.</text>
 
     <g transform="translate(30 244)">
       <rect x="0" y="0" width="260" height="32" rx="8" fill="#FFFFFF" stroke="#D9CCFA"/>
       <text x="130" y="21" text-anchor="middle"
-            font-family="'Cascadia Code', Consolas, monospace" font-size="11.5" fill="#5B21B6">.AsBuilder().UseFunctionInvocation()</text>
+            font-family="'Cascadia Code', Consolas, monospace" font-size="11.5" fill="#5B21B6">Azure.Identity: explicit credential</text>
     </g>
   </g>
 
@@ -121,7 +121,7 @@
     <text x="104" y="86" font-size="12" fill="#5A6B7C">OpenAI 2.14.0 &#183; MEAI.OpenAI 10.11.0</text>
 
     <rect x="104" y="102" width="330" height="34" rx="8" fill="#0A2540"/>
-    <text x="120" y="124" font-family="'Cascadia Code', Consolas, monospace" font-size="12.5" fill="#6EE7B7">GetResponsesClient().AsIChatClient()</text>
+    <text x="120" y="124" font-family="'Cascadia Code', Consolas, monospace" font-size="12" fill="#6EE7B7">AddKeyedResponsesChatClient("gpt", ...)</text>
 
     <g transform="translate(104 150)">
       <rect x="0" y="0" width="148" height="28" rx="14" fill="#E6F6F0" stroke="#10A37F" stroke-width="1.2"/>
@@ -147,10 +147,10 @@
 
     <use href="#logoAnthropic" x="37" y="46" width="46" height="46"/>
     <text x="104" y="62" font-size="21" font-weight="700" fill="#0A2540">Anthropic C# SDK</text>
-    <text x="104" y="86" font-size="12" fill="#5A6B7C">Anthropic 13.3.0 &#183; Anthropic.Foundry 1.0.0</text>
+    <text x="104" y="86" font-size="12" fill="#5A6B7C">Anthropic 13.3.0 &#183; native MEAI adapter</text>
 
     <rect x="104" y="102" width="330" height="34" rx="8" fill="#0A2540"/>
-    <text x="120" y="124" font-family="'Cascadia Code', Consolas, monospace" font-size="12.5" fill="#FBBF9C">AnthropicFoundryClient().AsIChatClient()</text>
+    <text x="120" y="124" font-family="'Cascadia Code', Consolas, monospace" font-size="11.5" fill="#FBBF9C">AddKeyedAnthropicChatClient("claude", ...)</text>
 
     <g transform="translate(104 150)">
       <rect x="0" y="0" width="148" height="28" rx="14" fill="#FCEDE5" stroke="#D97757" stroke-width="1.2"/>
@@ -191,7 +191,7 @@
   <!-- Footer -->
   <g transform="translate(820 662)" text-anchor="middle">
     <text font-size="14.5" fill="#5A6B7C">
-      <tspan font-weight="700" fill="#0A2540">Swap models without rewriting the app</tspan>
+      <tspan font-weight="700" fill="#0A2540">Swap models and providers without rewriting the app</tspan>
       <tspan dx="10">&#183;</tspan>
       <tspan dx="10" font-weight="700" fill="#0A2540">Entra ID</tspan> locally &#183; managed identity in Azure
       <tspan dx="10">&#183;</tspan>

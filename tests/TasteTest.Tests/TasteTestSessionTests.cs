@@ -570,9 +570,10 @@ public sealed class TasteTestSessionTests
         Assert.Equal(5, forcedRenders);
     }
 
-    private static TasteTestSession CreateSession(IModelChatClientFactory factory, TasteTestOptions? options = null) =>
+    private static TasteTestSession CreateSession(TrackingClientFactory factory, TasteTestOptions? options = null) =>
         new(
-            factory,
+            factory.OpenAI,
+            factory.Anthropic,
             new FixedLaneOrderRandomizer(),
             Options.Create(options ?? new TasteTestOptions { UseSampleResponses = true }),
             NullLogger<TasteTestSession>.Instance);
@@ -582,25 +583,17 @@ public sealed class TasteTestSessionTests
         public bool PlaceOpenAIFirst() => true;
     }
 
-    private sealed class TrackingClientFactory : IModelChatClientFactory, IDisposable
+    private sealed class TrackingClientFactory : IDisposable
     {
         public TrackingClientFactory(ConcurrencyProbe? probe = null)
         {
-            OpenAI = new TrackingChatClient("OpenAI response", probe);
-            Anthropic = new TrackingChatClient("Anthropic response", probe);
+            OpenAI = new TrackingChatClient("gpt-test", "OpenAI response", probe);
+            Anthropic = new TrackingChatClient("claude-test", "Anthropic response", probe);
         }
 
         public TrackingChatClient OpenAI { get; }
 
         public TrackingChatClient Anthropic { get; }
-
-        public IChatClient GetClient(ProviderKind provider) =>
-            provider == ProviderKind.OpenAI ? OpenAI : Anthropic;
-
-        public ModelIdentity GetIdentity(ProviderKind provider) =>
-            provider == ProviderKind.OpenAI
-                ? new("OpenAI", "gpt-test", "Responses API", "OpenAI SDK")
-                : new("Anthropic", "claude-test", "Messages API", "Anthropic SDK");
 
         public void Dispose()
         {
@@ -610,6 +603,7 @@ public sealed class TasteTestSessionTests
     }
 
     private sealed class TrackingChatClient(
+        string modelId,
         string responseText,
         ConcurrencyProbe? probe) : IChatClient
     {
@@ -701,7 +695,9 @@ public sealed class TasteTestSessionTests
         }
 
         public object? GetService(Type serviceType, object? serviceKey = null) =>
-            serviceType.IsInstanceOfType(this) ? this : null;
+            serviceType == typeof(ChatClientMetadata)
+                ? new ChatClientMetadata("test", defaultModelId: modelId)
+                : serviceType.IsInstanceOfType(this) ? this : null;
 
         public void Dispose()
         {

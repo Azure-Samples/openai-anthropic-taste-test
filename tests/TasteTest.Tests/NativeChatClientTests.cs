@@ -5,12 +5,14 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using Azure.Core;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using TasteTest.Services;
 
 namespace TasteTest.Tests;
 
-public sealed class FoundryModelChatClientFactoryTests
+public sealed class NativeChatClientTests
 {
     [Theory]
     [InlineData(ProviderKind.OpenAI)]
@@ -18,7 +20,7 @@ public sealed class FoundryModelChatClientFactoryTests
     public async Task GetStreamingResponseAsync_InvokesTheSameBusinessToolThroughBothSdks(ProviderKind provider)
     {
         using var transport = new RecordingTransport(invokeTools: true);
-        using var factory = CreateFactory(transport);
+        using ServiceProvider services = CreateServices(transport);
         var plans = new List<string>();
         var tool = DemoSupportCatalog.CreateTool((plan, _) =>
         {
@@ -27,7 +29,7 @@ public sealed class FoundryModelChatClientFactoryTests
         });
         var updates = new List<ChatResponseUpdate>();
 
-        await foreach (var update in factory.GetClient(provider).GetStreamingResponseAsync(
+        await foreach (ChatResponseUpdate update in GetClient(services, provider).GetStreamingResponseAsync(
             [new ChatMessage(ChatRole.User, "Compare Business and Enterprise for 80 seats.")],
             new ChatOptions { Tools = [tool], MaxOutputTokens = 4096 }))
         {
@@ -67,7 +69,7 @@ public sealed class FoundryModelChatClientFactoryTests
     public async Task FunctionInvocation_IsBoundedAndMakesAFinalCallWithoutTools()
     {
         using var transport = new RecordingTransport(invokeTools: true, repeatTools: true);
-        using var factory = CreateFactory(transport);
+        using ServiceProvider services = CreateServices(transport);
         var count = 0;
         var tool = DemoSupportCatalog.CreateTool((_, _) =>
         {
@@ -75,7 +77,7 @@ public sealed class FoundryModelChatClientFactoryTests
             return Task.CompletedTask;
         });
 
-        await foreach (var _ in factory.GetClient(ProviderKind.OpenAI).GetStreamingResponseAsync(
+        await foreach (ChatResponseUpdate _ in GetClient(services, ProviderKind.OpenAI).GetStreamingResponseAsync(
             [new ChatMessage(ChatRole.User, "Compare plans.")], new ChatOptions { Tools = [tool] }))
         {
         }
@@ -101,10 +103,10 @@ public sealed class FoundryModelChatClientFactoryTests
         ActivitySource.AddActivityListener(listener);
         using var parent = new Activity("private-test").Start();
         using var transport = new RecordingTransport(invokeTools: true);
-        using var factory = CreateFactory(transport);
+        using ServiceProvider services = CreateServices(transport);
         var tool = DemoSupportCatalog.CreateTool((_, _) => Task.CompletedTask);
 
-        await foreach (var _ in factory.GetClient(provider).GetStreamingResponseAsync(
+        await foreach (ChatResponseUpdate _ in GetClient(services, provider).GetStreamingResponseAsync(
             [new ChatMessage(ChatRole.User, "PROMPT_MUST_NOT_BE_EXPORTED")],
             new ChatOptions { Tools = [tool] }))
         {
@@ -122,14 +124,28 @@ public sealed class FoundryModelChatClientFactoryTests
         Assert.DoesNotContain("Business", exportedText, StringComparison.Ordinal);
     }
 
-    private static FoundryModelChatClientFactory CreateFactory(RecordingTransport transport) =>
-        new(Options.Create(new TasteTestOptions
-        {
-            FoundryEndpoint = "https://test-account.services.ai.azure.com",
-            FoundryResourceName = "test-account",
-            AoaiDeploymentName = "gpt-test",
-            ClaudeDeploymentName = "claude-test"
-        }), new TestCredential(), transport);
+    private static ServiceProvider CreateServices(RecordingTransport transport, TestCredential? credential = null)
+    {
+        HostApplicationBuilder builder = Host.CreateEmptyApplicationBuilder(null);
+        builder.Services.AddLogging();
+        builder.Configuration.AddInMemoryCollection(ChatClientRegistrationTests.Configuration());
+        ChatClientRegistrationTests.AddTestCredentialResolver(builder, credential ?? new TestCredential());
+        ConfigureChatClient(builder.AddKeyedResponsesChatClient("gpt", "TasteTest:Gpt", transport.CreateClient("gpt")));
+        ConfigureChatClient(builder.AddKeyedAnthropicChatClient("claude", "TasteTest:Claude", transport.CreateClient("claude")));
+        return builder.Services.BuildServiceProvider();
+
+        static void ConfigureChatClient(ChatClientBuilder client) =>
+            client.UseFunctionInvocation(configure: invocation =>
+                {
+                    invocation.MaximumIterationsPerRequest = 4;
+                    invocation.MaximumConsecutiveErrorsPerRequest = 4;
+                })
+                .UseOpenTelemetry(sourceName: TasteTestTelemetry.SourceName,
+                    configure: telemetry => telemetry.EnableSensitiveData = false);
+    }
+
+    private static IChatClient GetClient(IServiceProvider services, ProviderKind provider) =>
+        services.GetRequiredKeyedService<IChatClient>(provider == ProviderKind.OpenAI ? "gpt" : "claude");
 
     [Theory]
     [InlineData(ProviderKind.OpenAI, false, false)]
@@ -141,17 +157,10 @@ public sealed class FoundryModelChatClientFactoryTests
         ProviderKind provider, bool tokenLimit, bool partialText)
     {
         using var transport = new RecordingTransport(tokenLimit, partialText);
-        using var factory = new FoundryModelChatClientFactory(
-            Options.Create(new TasteTestOptions
-            {
-                FoundryEndpoint = "https://test-account.services.ai.azure.com",
-                FoundryResourceName = "test-account",
-                AoaiDeploymentName = "gpt-test",
-                ClaudeDeploymentName = "claude-test"
-            }), new TestCredential(), transport);
+        using ServiceProvider services = CreateServices(transport);
         var updates = new List<ChatResponseUpdate>();
 
-        await foreach (var update in factory.GetClient(provider).GetStreamingResponseAsync(
+        await foreach (ChatResponseUpdate update in GetClient(services, provider).GetStreamingResponseAsync(
             [new ChatMessage(ChatRole.User, "Test prompt")],
             new ChatOptions
             {
@@ -197,18 +206,9 @@ public sealed class FoundryModelChatClientFactoryTests
     {
         var credential = new TestCredential();
         using var transport = new RecordingTransport();
-        using var factory = new FoundryModelChatClientFactory(
-            Options.Create(new TasteTestOptions
-            {
-                FoundryEndpoint = "https://test-account.services.ai.azure.com",
-                FoundryResourceName = "test-account",
-                AoaiDeploymentName = "gpt-test",
-                ClaudeDeploymentName = "claude-test"
-            }),
-            credential,
-            transport);
+        using ServiceProvider services = CreateServices(transport, credential);
 
-        var response = await factory.GetClient(provider).GetResponseAsync(
+        ChatResponse response = await GetClient(services, provider).GetResponseAsync(
             [new ChatMessage(ChatRole.User, "Test prompt")],
             new ChatOptions { MaxOutputTokens = 256 });
 
