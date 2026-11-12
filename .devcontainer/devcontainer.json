@@ -10,7 +10,7 @@
     "ghcr.io/azure/azure-dev/azd:0.2.0": {
       "version": "1.37.1"
     },
-    "ghcr.io/devcontainers/features/docker-outside-of-docker:1.10.1": {}
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1.10.2": {}
   },
   "customizations": {
     "vscode": {
